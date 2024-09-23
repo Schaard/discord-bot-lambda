@@ -29,6 +29,12 @@
     - name: "last_words"
       type: 3 # STRING
       description: "Victim's last words"
+    - name: "unforgivable"
+      type: 5 # BOOLEAN
+      description: "Whether the kill is unforgivable"
+    - name: "forgiven"
+      type: 5 # BOOLEAN
+      description: "Whether the kill has been forgiven"
 
 - name: "ettu"
   description: "Report a betrayal incident"
@@ -44,6 +50,14 @@
     - name: "your_last_words"
       type: 3 # STRING
       description: "Your last words"
+    - name: "unforgivable"
+      type: 5 # BOOLEAN
+      description: "Whether the kill is unforgivable"
+      required: false
+    - name: "forgiven"
+      type: 5 # BOOLEAN
+      description: "Whether the kill has been forgiven"
+      required: false
 
 - name: "undoops"
   description: "Undo your latest /oops or /ettu"

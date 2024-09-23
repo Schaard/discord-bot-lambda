@@ -33,53 +33,54 @@ with open(yaml_path, "r") as file:
 commands = yaml.safe_load(yaml_content)
 headers = {"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"}
 
-"""
-# DELETE ALL GLOBAL-LEVEL COMMANDS
-# First, get all existing GLOBAL commands
-response = requests.get(URL_GLOBAL, headers=headers)
-existing_commands = response.json()
-if response.status_code == 200:
-    # If there are existing commands, delete them
-    if existing_commands:
-        for command in existing_commands:
-            delete_url = f"{URL_GLOBAL}/{command['id']}"
-            delete_response = requests.delete(delete_url, headers=headers)
-            if delete_response.status_code == 204:
-                print(f"Successfully deleted command: {command['name']}")
-            else:
-                print(f"Failed to delete command: {command['name']}. Status code: {delete_response.status_code}")
+delete_global_commands = False
+if delete_global_commands:
+    # DELETE ALL GLOBAL-LEVEL COMMANDS
+    # First, get all existing GLOBAL commands
+    response = requests.get(URL_GLOBAL, headers=headers)
+    existing_commands = response.json()
+    if response.status_code == 200:
+        # If there are existing commands, delete them
+        if existing_commands:
+            for command in existing_commands:
+                delete_url = f"{URL_GLOBAL}/{command['id']}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                if delete_response.status_code == 204:
+                    print(f"Successfully deleted command: {command['name']}")
+                else:
+                    print(f"Failed to delete command: {command['name']}. Status code: {delete_response.status_code}")
+        else:
+            print("No global commands found.")
+        
+        print("All global commands have been cleared.")
     else:
-        print("No global commands found.")
-    
-    print("All global commands have been cleared.")
-else:
-    print(f"Failed to retrieve global commands. Status code: {response.status_code}")
-    print(f"Response: {response.text}")
- """
+        print(f"Failed to retrieve global commands. Status code: {response.status_code}")
+        print(f"Response: {response.text}")
 
-"""
-# DELETE ALL GUILD-LEVEL COMMANDS
-# First, get all existing GUILD commands
-response = requests.get(URL_GUILD, headers=headers)
-existing_commands = response.json()
-if response.status_code == 200:
-    # If there are existing commands, delete them
-    if existing_commands:
-        for command in existing_commands:
-            delete_url = f"{URL_GUILD}/{command['id']}"
-            delete_response = requests.delete(delete_url, headers=headers)
-            if delete_response.status_code == 204:
-                print(f"Successfully deleted command: {command['name']}")
-            else:
-                print(f"Failed to delete command: {command['name']}. Status code: {delete_response.status_code}")
+delete_guild_commands = False
+if delete_guild_commands:
+    # DELETE ALL GUILD-LEVEL COMMANDS
+    # First, get all existing GUILD commands
+    response = requests.get(URL_GUILD, headers=headers)
+    existing_commands = response.json()
+    if response.status_code == 200:
+        # If there are existing commands, delete them
+        if existing_commands:
+            for command in existing_commands:
+                delete_url = f"{URL_GUILD}/{command['id']}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                if delete_response.status_code == 204:
+                    print(f"Successfully deleted command: {command['name']}")
+                else:
+                    print(f"Failed to delete command: {command['name']}. Status code: {delete_response.status_code}")
+        else:
+            print("No GUILD commands found.")
+        
+        print("All GUILD commands have been cleared.")
     else:
-        print("No GUILD commands found.")
-    
-    print("All GUILD commands have been cleared.")
-else:
-    print(f"Failed to retrieve GUILD commands. Status code: {response.status_code}")
-    print(f"Response: {response.text}")
-"""
+        print(f"Failed to retrieve GUILD commands. Status code: {response.status_code}")
+        print(f"Response: {response.text}")
+
 
 # Bulk update approach
 def handle_rate_limit(response):

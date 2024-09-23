@@ -3,3 +3,4 @@ mangum
 asgiref
 discord-interactions
 python-dotenv
+requests

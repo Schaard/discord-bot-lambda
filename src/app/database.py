@@ -46,11 +46,22 @@ class DynamoDBHandler:
         # Get a reference to the specific table we'll be using
         self.table = self.dynamodb.Table(table_name)
 
-    def add_kill(self, user_id, target_user_id, cause_of_death):
+    def add_kill(self, submitter_id, user_id, target_user_id, cause_of_death, server_id, game_id, channel_id, unforgivable=False, forgiven=False):
         try:
             # Get the current UTC time and format it as ISO 8601 string
             timestamp = datetime.utcnow().isoformat()
             
+            kill_record = {
+            'SubmitterId': submitter_id,
+            'CauseOfDeath': cause_of_death,
+            'Timestamp': timestamp,
+            'ServerId': server_id,
+            'GameId': game_id,
+            'ChannelId': channel_id,
+            'Unforgivable': unforgivable,
+            'Forgiven': forgiven
+            }
+
             # Update the item in the DynamoDB table
             response = self.table.update_item(
                 # Specify the item to update using its composite primary key
@@ -63,10 +74,7 @@ class DynamoDBHandler:
                 # Define the values used in the UpdateExpression
                 ExpressionAttributeValues={
                     ':empty_list': [],  # Used if KillRecords doesn't exist yet
-                    ':new_kill': [{     # The new kill record to append
-                        'Timestamp': timestamp,
-                        'CauseOfDeath': cause_of_death
-                    }]
+                    ':new_kill': [kill_record]
                 },
                 # Specify that we want the updated values returned
                 ReturnValues="UPDATED_NEW"
@@ -128,9 +136,41 @@ class DynamoDBHandler:
             print(f"Error retrieving kills: {e.response['Error']['Message']}")
             raise
 
+    def forgive_kill(self, user_id, target_user_id, index):
+        try:
+            # Get the current kill records
+            kill_records = self.get_kills(user_id, target_user_id)
+            
+            # Check if the index is valid
+            if index < 0 or index >= len(kill_records):
+                raise ValueError("Invalid index for kill record")
+            
+            # Update the specified kill record
+            kill_records[index]['Forgiven'] = True
+            
+            # Update the item in the DynamoDB table
+            response = self.table.update_item(
+                Key={
+                    'UserId': user_id,
+                    'TargetUserId': target_user_id
+                },
+                UpdateExpression="SET KillRecords = :updated_records",
+                ExpressionAttributeValues={
+                    ':updated_records': kill_records
+                },
+                ReturnValues="UPDATED_NEW"
+            )
+            return response
+        except ClientError as e:
+            print(f"Error forgiving kill: {e.response['Error']['Message']}")
+            raise
+        except ValueError as e:
+            print(f"Error forgiving kill: {str(e)}")
+            raise
+
     def get_kill_count(self, user_id):
         """
-        Retrieves the total number of kills for a specific user across all their targets.
+        Retrieves the total number of kills for a specific user across all their targets that are marked as unforgiven.
         
         :param user_id: The ID of the user whose kill count is being retrieved
         :return: The total number of kills for the user
@@ -147,7 +187,9 @@ class DynamoDBHandler:
             # Iterate through all items and sum up the lengths of KillRecords
             for item in response['Items']:
                 kill_records = item.get('KillRecords', [])
-                kill_count += len(kill_records)
+                # Count only the kills that are not marked as forgiven
+                unforgiven_kills = [kill for kill in kill_records if not kill.get('Forgiven', False)]
+                kill_count += len(unforgiven_kills)
 
             return kill_count
 
@@ -216,6 +258,9 @@ class DynamoDBHandler:
             # If an error occurs, print it and re-raise the exception
             print(f"Error retrieving all kills: {e.response['Error']['Message']}")
             raise
+    
+    
+
 
     def undo_last_incident(self, user_id):
         try:
