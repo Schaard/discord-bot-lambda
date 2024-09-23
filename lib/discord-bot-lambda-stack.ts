@@ -1,6 +1,10 @@
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 export class DiscordBotLambdaStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -13,9 +17,12 @@ export class DiscordBotLambdaStack extends cdk.Stack {
         code: lambda.DockerImageCode.fromImageAsset("./src"),
         memorySize: 1024,
         timeout: cdk.Duration.seconds(10),
-        architecture: lambda.Architecture.ARM_64,
+        architecture: lambda.Architecture.X86_64,
         environment: {
-          DISCORD_PUBLIC_KEY: "INSERT_YOUR_DISCORD_PUBLIC_KEY_HERE",
+          DISCORD_PUBLIC_KEY: process.env.DISCORD_PUBLIC_KEY || "",
+          TOKEN: process.env.TOKEN || "",
+          APPLICATION_ID: process.env.APPLICATION_ID|| "",
+          DYNAMODB_TABLE_NAME: process.env.DYNAMODB_TABLE_NAME|| "",
         },
       }
     );
