@@ -23,6 +23,7 @@ export class DiscordBotLambdaStack extends cdk.Stack {
           TOKEN: process.env.TOKEN || "",
           APPLICATION_ID: process.env.APPLICATION_ID|| "",
           DYNAMODB_TABLE_NAME: process.env.DYNAMODB_TABLE_NAME|| "",
+          STEP_FUNCTION_ARN: process.env.STEP_FUNCTION_ARN|| "",
         },
       }
     );
