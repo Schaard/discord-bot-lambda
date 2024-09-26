@@ -46,11 +46,8 @@ class DynamoDBHandler:
         # Get a reference to the specific table we'll be using
         self.table = self.dynamodb.Table(table_name)
 
-    def add_kill(self, submitter_id, user_id, target_user_id, cause_of_death, server_id, game_id, channel_id, unforgivable=False, forgiven=False):
+    def add_kill(self, submitter_id, user_id, target_user_id, cause_of_death, server_id, game_id, channel_id, timestamp, unforgivable=False, forgiven=False):
         try:
-            # Get the current UTC time and format it as ISO 8601 string
-            timestamp = datetime.utcnow().isoformat()
-            
             kill_record = {
             'SubmitterId': submitter_id,
             'CauseOfDeath': cause_of_death,
@@ -135,8 +132,46 @@ class DynamoDBHandler:
             # If an error occurs, print it and re-raise the exception
             print(f"Error retrieving kills: {e.response['Error']['Message']}")
             raise
+    
+    def forgive_kill(self, user_id, victim, timestamp):
+        try:
+            # Retrieve the kills for the given user and victim
+            kill_records = self.get_kills(user_id, victim)
+            
+            # Check if any kills exist
+            if not kill_records:
+                return f"No kill records found for {user_id} on {victim}"
+            
+            # Find the kill record with the matching timestamp
+            for kill in kill_records:
+                if kill['Timestamp'] == timestamp:
+                    # Mark the kill as forgiven
+                    kill['Forgiven'] = True
+                    break
+            else:
+                # If no matching timestamp was found, return an error
+                return f"No kill record found with the timestamp {timestamp}"
 
-    def forgive_kill(self, user_id, target_user_id, index):
+            # Update the kill records in DynamoDB
+            response = self.table.update_item(
+                Key={
+                    'UserId': user_id,
+                    'TargetUserId': victim
+                },
+                UpdateExpression="SET KillRecords = :updated_records",
+                ExpressionAttributeValues={
+                    ':updated_records': kill_records
+                },
+                ReturnValues="UPDATED_NEW"
+            )
+
+            return response
+            
+        except ClientError as e:
+            print(f"Error forgiving kill: {e.response['Error']['Message']}")
+            raise
+
+    def forgive_kill_by_index(self, user_id, target_user_id, index):
         try:
             # Get the current kill records
             kill_records = self.get_kills(user_id, target_user_id)

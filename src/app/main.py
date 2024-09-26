@@ -8,6 +8,7 @@ from database import DynamoDBHandler
 from dotenv import load_dotenv
 import json
 import boto3
+from datetime import datetime
 
 #set up logging
 logger = logging.getLogger()
@@ -72,17 +73,16 @@ def get_grudge_description(user_id, user_kills, compare_user, compare_kills):
 
     for threshold, descriptor in sorted(lead_descriptors.items(), reverse=True):
         if abs(kill_count_difference) >= threshold:
-            if kill_count_difference > 0:
+            if kill_count_difference >= 0:
                 message_content = f"{mention_user(compare_user)} has {descriptor} against {mention_user(user_id)} (+{kill_count_difference})."
             elif kill_count_difference < 0:
                 message_content = f"{mention_user(user_id)} has {descriptor} against {mention_user(compare_user)} (+{abs(kill_count_difference)})."
             break
     else:
         message_content = "Both users are tied in their kill counts. No grudge detected. "
-
     return message_content
 
-def start_followup_message_step_function(raw_request, follow_up_messages):
+def start_message_step_function(raw_request, messages, follow_up_messages, remove_all_buttons = False):
     # Initialize AWS Step Functions client
     application_id = raw_request['application_id']
     interaction_token = raw_request['token']
@@ -91,18 +91,32 @@ def start_followup_message_step_function(raw_request, follow_up_messages):
 
     STEP_FUNCTION_ARN = os.environ.get("STEP_FUNCTION_ARN")
     stepfunctions_client = boto3.client('stepfunctions')
-    #print(f"{STEP_FUNCTION_ARN}")
+    logging.info(f"STARTING STEP FUNCTION: {STEP_FUNCTION_ARN}")
     stepfunctions_client.start_execution(
         stateMachineArn=STEP_FUNCTION_ARN,
         input=json.dumps({
             'application_id': application_id,
             'interaction_token': interaction_token,
-            'follow_up_messages': follow_up_messages,
+            'messages': messages,
+            'follow_up_messages' : follow_up_messages,
             'id' : interaction_id,
-            'message_id' : message_id
+            'message_id' : message_id,
+            'remove_all_buttons' : remove_all_buttons
         })
     )
 
+def handle_forgive_button(raw_request):
+    # Extract the custom_id from the interaction
+    custom_id = raw_request['data']['custom_id']
+    
+    # Parse the custom_id to get the relevant fields
+    _, user_id, victim, timestamp = custom_id.split('_')
+
+    # Use the parsed information to mark the specific kill as forgiven in the database
+    db.forgive_kill(user_id, victim, timestamp)
+    forgiveness_message = f"{mention_user(user_id)} has forgiven {mention_user(victim)}'s kill on {timestamp}."
+    start_message_step_function(raw_request, [forgiveness_message], [], True)
+    
 def handle_component_interaction(raw_request):
     data = raw_request["data"]
     custom_id = data["custom_id"]
@@ -112,8 +126,8 @@ def handle_component_interaction(raw_request):
         allowed_user_id = custom_id.split(":")[1]
         
         if user_id == allowed_user_id:
-            follow_up_messages = ["Hello! This is a follow-up message."]
-            start_followup_message_step_function(raw_request, follow_up_messages)
+            messages = ["Hello! This is a follow-up message."]
+            start_message_step_function(raw_request, messages)
             print(f"Right user found!")
             return {
                 "type": 4,
@@ -130,12 +144,17 @@ def handle_component_interaction(raw_request):
                 }
             })
         
-    elif custom_id.startswith("forgive_button:"):
-        allowed_user_id = custom_id.split(":")[1]
-        if user_id == allowed_user_id:
+    elif custom_id.startswith("forgive_"):
+        logger.info(f"{custom_id}")
+        custom_id_list = custom_id.split("_")
+        #killer_id = custom_id_list[1]
+        victim_id = custom_id_list[2]
+        #timestamp = custom_id_list[3]
+
+        if user_id == victim_id:
             # Process forgiveness immediately
             
-            
+            handle_forgive_button(raw_request)
             return jsonify({
                 "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
                 "data": {
@@ -205,50 +224,54 @@ def interact(raw_request):
                     server_id = str(data["guild_id"])
                     game_id = "default_game_id"  # Replace with the actual game ID
                     channel_id = str(raw_request["channel_id"])
-                        
+                    
+                    # Get the current UTC time and format it as ISO 8601 string
+                    timestamp = datetime.utcnow().isoformat()
+
                     try:
-                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, unforgivable, forgiven)
-                        
+                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, unforgivable, forgiven)
+
                         # Construct the message_content dynamically
-                        message_content = f"Oops! {mention_user(user_id)} killed {mention_user(victim)} by {cause_of_death}."
+                        content_for_kill_message = f"Oops! {mention_user(user_id)} killed {mention_user(victim)} by {cause_of_death}."
 
                         if last_words:
-                            message_content += f' Their last words were: "{last_words}"'
+                            content_for_kill_message += f' Their last words were: "{last_words}"'
 
                         if unforgivable:
-                            message_content += " This kill is unforgivable!"
+                            content_for_kill_message += " This kill is unforgivable!"
 
                         if forgiven:
-                            message_content += " But it has been forgiven."
+                            content_for_kill_message += " But it has been forgiven."
 
                         user_kills = db.get_kill_count(user_id)
                         compare_kills = db.get_kill_count(victim)
-                        message_content += f"\n{get_grudge_description(user_id, user_kills, victim, compare_kills)}"
+                        
+                        content_for_kill_message += f"\n{get_grudge_description(user_id, user_kills, victim, compare_kills)}"
 
+                        # Create a response with a button
+                        response_data = {
+                            "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+                            "data": {
+                                "content": content_for_kill_message,
+                                "components": [
+                                    {
+                                        "type": 1,  # ACTION_ROW
+                                        "components": [
+                                            {
+                                                "type": 2,  # Button
+                                                "label": "Forgive",
+                                                "style": 1,
+                                                "custom_id": f"forgive_{user_id}_{victim}_{timestamp}"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                        return jsonify(response_data)
                     except Exception as e:
                         message_content = f"Error recording oops: {str(e)}"
-
-                    # Create a response with a button
-                    response_data = {
-                        "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
-                        "data": {
-                            "content": message_content,
-                            "components": [
-                                {
-                                    "type": 1,  # ACTION_ROW
-                                    "components": [
-                                        {
-                                            "type": 2,  # BUTTON
-                                            "label": "Forgive",
-                                            "style": 1,  # PRIMARY
-                                            "custom_id": f"forgive_button:{victim}"
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    }
-                    return jsonify(response_data)
+                    
                 case "ettu":
                     betrayer = data["options"][0]["value"]
                     murder_weapon = data["options"][1]["value"] if len(data["options"]) > 1 else "unknown"
@@ -256,13 +279,16 @@ def interact(raw_request):
                     unforgivable = data["options"][3]["value"] if len(data["options"]) > 3 else False
                     forgiven = data["options"][4]["value"] if len(data["options"]) > 4 else False
 
+                    # Get the current UTC time and format it as ISO 8601 string
+                    timestamp = datetime.utcnow().isoformat()
+
                     # Retrieve the server, game, and channel IDs
                     server_id = str(data["guild_id"])
                     game_id = "default_game_id"  # Replace with the actual game ID
                     channel_id = str(raw_request["channel_id"])
                     
                     try:
-                        db.add_kill(betrayer, betrayer, user_id, murder_weapon, server_id, game_id, channel_id, unforgivable, forgiven)
+                        db.add_kill(betrayer, betrayer, user_id, murder_weapon, server_id, game_id, channel_id, timestamp, unforgivable, forgiven)
 
                         # Construct the message_content dynamically
                         if murder_weapon != "unknown":
