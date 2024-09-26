@@ -133,6 +133,42 @@ class DynamoDBHandler:
             print(f"Error retrieving kills: {e.response['Error']['Message']}")
             raise
     
+    def get_unforgivens_on_user(self, user_id, victim):
+        try:
+            # Retrieve the kills for the given user and victim
+            kill_records = self.get_kills(user_id, victim)
+            print(f"Kill records: {kill_records}")
+            # Filter out the unforgiven kills
+            unforgiven_kills = [kill for kill in kill_records if not kill['Forgiven']]
+            print(f"Unforgiven kills: {unforgiven_kills}")
+            return unforgiven_kills
+        except ClientError as e:
+            print(f"Error retrieving unforgiven kills: {e.response['Error']['Message']}")
+            raise
+    def get_unforgivencount_on_user(self, user_id, victim):
+        try:
+            # Retrieve the kills for the given user and victim
+            unforgiven_kill_number = len(self.get_unforgivens_on_user(user_id, victim))
+            return unforgiven_kill_number
+        except ClientError as e:
+            print(f"Error counting unforgiven kills: {e.response['Error']['Message']}")
+            raise    
+    def get_grudge(self, user_id, victim):
+        try:
+            # Count the number of unforgiven kills on the first person 
+            caller_unforgiven_count = self.get_unforgivencount_on_user(user_id, victim)
+            print(f"Caller unforgiven count: {caller_unforgiven_count}")
+            # Count the number of unforgiven kills on the second person 
+            victim_unforgiven_count = self.get_unforgivencount_on_user(victim, user_id)
+            # Calculate the final tally
+            print(f"Victim unforgiven count: {victim_unforgiven_count}")
+            final_tally = victim_unforgiven_count + caller_unforgiven_count
+            
+            return final_tally
+        except ClientError as e:
+            print(f"Error comparing kills: {e.response['Error']['Message']}")
+            raise
+    
     def forgive_kill(self, user_id, victim, timestamp):
         try:
             # Retrieve the kills for the given user and victim

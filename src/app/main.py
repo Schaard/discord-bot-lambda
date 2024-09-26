@@ -163,13 +163,7 @@ def handle_component_interaction(raw_request):
                 }
             })
         else:
-            return jsonify({
-                "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
-                "data": {
-                    "content": "This grudge isn't yours to forgive.",
-                    "flags": 64  # EPHEMERAL
-                }
-            })
+            return "This grudge isn't yours to forgive."
 
 @verify_key_decorator(DISCORD_PUBLIC_KEY)
 def interact(raw_request):
@@ -243,8 +237,8 @@ def interact(raw_request):
                         if forgiven:
                             content_for_kill_message += " But it has been forgiven."
 
-                        user_kills = db.get_kill_count(user_id)
-                        compare_kills = db.get_kill_count(victim)
+                        user_kills = db.get_unforgivencount_on_user(user_id, victim)
+                        compare_kills = db.get_unforgivencount_on_user(victim, user_id)
                         
                         content_for_kill_message += f"\n{get_grudge_description(user_id, user_kills, victim, compare_kills)}"
 
@@ -356,10 +350,18 @@ def interact(raw_request):
         case 3:  # MESSAGE_COMPONENT
             logger.info("Message component received")
 
-            #do not return result 
+            #return strings as ethereal messages 
             result = handle_component_interaction(raw_request)
+            if isinstance(result, str):
+                return jsonify({
+                "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+                "data": {
+                    "content": result,
+                    "flags": 64  # EPHEMERAL
+                }
+            })
             
-            # Respond immediately with 202 Accepted
+            #If not string, Respond immediately with 202 Accepted
             response = Response('', 202)
             return response            
         case 4:  # APPLICATION_COMMAND_AUTOCOMPLETE
