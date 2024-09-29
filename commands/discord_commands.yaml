@@ -1,77 +1,34 @@
-- name: hello
-  description: Say hello!!!
-  type: 1 # CHAT_INPUT
-
-- name: goodbye
-  description: Say goodbye!
-  type: 1 # CHAT_INPUT
-
-- name: echo
-  description: Echo message back to sender.
-  type: 1 # CHAT_INPUT
-  options:
-    - name: message
-      description: The message to echo back.
-      type: 3 # STRING
-      required: true
-
-- name: "oops"
-  description: "Report a friendly fire incident"
-  type: 1 # CHAT_INPUT
-  options:
-    - name: "victim"
-      type: 6 # USER
-      description: "The target user who was killed"
-      required: true
-    - name: "cause_of_death"
-      type: 3 # STRING
-      description: "The cause of death"
-    - name: "last_words"
-      type: 3 # STRING
-      description: "Victim's last words"
-    - name: "unforgivable"
-      type: 5 # BOOLEAN
-      description: "Whether the kill is unforgivable"
-    - name: "forgiven"
-      type: 5 # BOOLEAN
-      description: "Whether the kill has been forgiven"
-
-- name: "ettu"
-  description: "Report a betrayal incident"
-  type: 1 # CHAT_INPUT
-  options:
-    - name: "betrayer"
-      type: 6 # USER
-      description: "The betrayer"
-      required: true
-    - name: "murder_weapon"
-      type: 3 # STRING
-      description: "The cause of death"
-    - name: "your_last_words"
-      type: 3 # STRING
-      description: "Your last words"
-    - name: "unforgivable"
-      type: 5 # BOOLEAN
-      description: "Whether the kill is unforgivable"
-      required: false
-    - name: "forgiven"
-      type: 5 # BOOLEAN
-      description: "Whether the kill has been forgiven"
-      required: false
-
 - name: "undoops"
   description: "Undo your latest /oops or /ettu"
   type: 1 # CHAT_INPUT
 
-- name: "grudge"
-  description: "Compare your friendly fire with another user"
+- name: "grudges"
+  description: "Compare grudges with another user"
   type: 1 # CHAT_INPUT
   options:
     - name: "user"
       type: 6 # USER
-      description: "The user to compare stats for"
+      description: "The user to compare grudges"
       required: true
 
 - name: "hallofshame"
   description: "Show the most egregious teamkillers"
   type: 1 # CHAT_INPUT
+
+- name: "oops"
+  description: "Record a grudge on behalf of your victim"
+  type: 1 # CHAT_INPUT
+  options:
+    - name: "victim"
+      type: 6 # USER
+      description: "The user you killed"
+      required: true
+
+- name: "grudge"
+  description: "Record a grudge against your killer"
+  type: 1 # CHAT_INPUT
+  options:
+    - name: "killer"
+      type: 6 # USER
+      description: "The user who killed you"
+      required: true

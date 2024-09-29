@@ -157,11 +157,11 @@ class DynamoDBHandler:
         try:
             # Count the number of unforgiven kills on the first person 
             caller_unforgiven_count = self.get_unforgivencount_on_user(user_id, victim)
-            print(f"Caller unforgiven count: {caller_unforgiven_count}")
+            #print(f"Caller unforgiven count: {caller_unforgiven_count}")
             # Count the number of unforgiven kills on the second person 
             victim_unforgiven_count = self.get_unforgivencount_on_user(victim, user_id)
             # Calculate the final tally
-            print(f"Victim unforgiven count: {victim_unforgiven_count}")
+            #print(f"Victim unforgiven count: {victim_unforgiven_count}")
             final_tally = victim_unforgiven_count + caller_unforgiven_count
             
             return final_tally
