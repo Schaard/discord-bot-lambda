@@ -8,7 +8,7 @@ from database import DynamoDBHandler
 from dotenv import load_dotenv
 import json
 import boto3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import requests
 import random
 import re
@@ -47,13 +47,35 @@ def get_name_fromid(user_id):
     else:
         print(f"Failed to fetch user: {response.status_code} - {response.text}")
         return None
-    
+
+def sanitize_input(user_input: str) -> str:
+    if not isinstance(user_input, str):
+        raise ValueError("Input must be a string")
+
+    # Strip leading and trailing whitespace
+    sanitized_input = user_input.strip()
+
+    # Remove control characters like newlines, tabs, etc.
+    sanitized_input = re.sub(r'[\n\r\t]', ' ', sanitized_input)
+
+    # Optionally remove any non-printable characters (Unicode and ASCII control characters)
+    sanitized_input = re.sub(r'[^\x20-\x7E]', '', sanitized_input)
+
+    # Escape or remove potentially harmful characters (e.g., for HTML contexts)
+    sanitized_input = sanitized_input.replace('<', '&lt;').replace('>', '&gt;').replace('&', '&amp;')
+
+    # Limit length if necessary (DynamoDB supports up to 400 KB for string values)
+    if len(sanitized_input) > 1000:  # Set your own length limit
+        sanitized_input = sanitized_input[:1000]
+
+    return sanitized_input
+
 def get_user_name(raw_request, user_id):
     #print the user name 
     try:
         user_info = raw_request['data']['resolved']['users'][f"{user_id}"]["username"]
     except Exception as e:
-        logger.error(f"Name not found in raw_request: {e}")
+        #logger.error(f"Name not found in raw_request: {e}")
         user_info = get_name_fromid(user_id)
     
     return user_info
@@ -281,11 +303,11 @@ def start_message_step_function(raw_request, messages, follow_up_messages=None, 
 
     # Get the Step Function ARN from environment variables
     STEP_FUNCTION_ARN = os.environ.get("STEP_FUNCTION_ARN")
-    
+
     # Initialize AWS Step Functions client
     stepfunctions_client = boto3.client('stepfunctions')
     
-    logging.info(f"STARTING STEP FUNCTION: {STEP_FUNCTION_ARN}")
+    #logging.info(f"STARTING STEP FUNCTION: {STEP_FUNCTION_ARN}")
     
     # Prepare the payload for the Step Function
     step_function_payload = {
@@ -340,8 +362,6 @@ def get_random_forgiveness_message(original_grudge_description, postforgiveness_
     ]
     
     return random.choice(messages)
-
-
 def handle_forgive_button(raw_request):
     # Extract the custom_id from the interaction
     custom_id = raw_request['data']['custom_id']
@@ -368,8 +388,7 @@ def handle_forgive_button(raw_request):
         forgivee_name = f"{mention_user(user_id)}" if self_forgive == False else "themselves"
         forgiveness_message = f"{get_name_fromid(victim)} has refused to forgive {forgivee_name}."
     
-    start_message_step_function(raw_request, [forgiveness_message], [], True)
-    
+    start_message_step_function(raw_request, [forgiveness_message], [], True)    
 def handle_component_interaction(raw_request):
     data = raw_request["data"]
     custom_id = data["custom_id"]
@@ -418,10 +437,14 @@ def handle_component_interaction(raw_request):
         else:
             return "This grudge isn't yours to forgive."
 
-def interpret_boolean_input(user_input: str) -> bool:
+def interpret_boolean_input(user_input=None, default_value=False) -> bool:
     # Define broad range of inputs for yes and no
     yes_responses = {"y", "ya", "yes", "ye", "yah", "yep", "yup", "yse", "yeah", "yass", "yas", "YES"}
-    no_responses = {"n", "no.", "no", "nah", "nope", "non", "nay", "na", "NO", "on"}  # Include 'on' since it's a common typo
+    no_responses = {"n", "no.", "no", "nah", "nope", "non", "nay", "na", "NO", "on"}  # Include 'on' for common typo
+
+    # Check if the input is None or not a string
+    if not isinstance(user_input, str):
+        return default_value
 
     # Remove punctuation using str.translate
     user_input_no_punctuation = user_input.translate(str.maketrans('', '', string.punctuation))
@@ -431,7 +454,7 @@ def interpret_boolean_input(user_input: str) -> bool:
 
     # Check for empty input
     if normalized_input == "":
-        return False
+        return default_value
 
     # Check if the input is in the yes or no sets
     if normalized_input in yes_responses:
@@ -439,8 +462,8 @@ def interpret_boolean_input(user_input: str) -> bool:
     elif normalized_input in no_responses:
         return False
     else:
-        # You can log a warning or default to False if input is unrecognized
-        return False
+        # Return the default value if input is unrecognized
+        return default_value
 
 @verify_key_decorator(DISCORD_PUBLIC_KEY)
 def interact(raw_request):
@@ -455,6 +478,37 @@ def interact(raw_request):
             user_id = raw_request["member"]["user"]["id"]
             
             match command_name:                 
+                case "report":
+                    # Generate a monthly report for the server (guild)
+                    server_id = str(raw_request["guild_id"])
+                    # Set the time range for the current month
+                    today = datetime.utcnow()
+
+                    def get_last_day_of_month(any_day):
+                        # The day 28 exists in every month. 4 days later, it's always next month
+                        next_month = any_day.replace(day=28) + timedelta(days=4)
+                        # subtracting the number of the current day brings us back to the end of current month
+                        return next_month - timedelta(days=next_month.day)
+                    # Get current time in UTC
+                    today = datetime.now(timezone.utc)
+
+                    # Calculate first day of the month
+                    first_day_of_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+                    # Calculate last day of the month
+                    last_day_of_month = get_last_day_of_month(today)
+
+                    # Generate the report using your DynamoDB handler
+                    monthly_report = db.get_wrapped_report(server_id, first_day_of_month, last_day_of_month)
+
+                    # Return the report as a message to the channel
+                    response_data = {
+                        "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+                        "data": {
+                            "content": monthly_report
+                        }
+                    }
+                    return jsonify(response_data)                
                 case "grudge":
                     killer = data["options"][0]["value"]
                     
@@ -498,21 +552,8 @@ def interact(raw_request):
                                             "type": 4,  # TEXT_INPUT
                                             "custom_id": "unforgivable_input",
                                             "style": 1,  # Short input
-                                            "label": "This grudge is UNFORGIVABLE (default: no)",
+                                            "label": "Typing  here will make this kill UNFORGIVABLE",
                                             "placeholder": "No",
-                                            "required": False
-                                        }
-                                    ]
-                                },
-                                {
-                                    "type": 1,  # ACTION_ROW
-                                    "components": [
-                                        {
-                                            "type": 4,  # TEXT_INPUT
-                                            "custom_id": "forgiven_input",
-                                            "style": 1,  # Short input
-                                            "label": "Have you forgiven them? (default: no)",
-                                            "placeholder": "No, I'm holding a grudge",
                                             "required": False
                                         }
                                     ]
@@ -652,6 +693,7 @@ def interact(raw_request):
 
                     # Process other modal inputs
                     cause_of_death = data["components"][0]["components"][0]["value"]
+                    cause_of_death = sanitize_input(cause_of_death)
                     last_words = data["components"][1]["components"][0]["value"]
                     unforgivable = data["components"][2]["components"][0]["value"]
                     unforgivable = interpret_boolean_input(unforgivable)
@@ -737,8 +779,8 @@ def interact(raw_request):
                     last_words = data["components"][1]["components"][0]["value"]
                     unforgivable = data["components"][2]["components"][0]["value"]
                     unforgivable = interpret_boolean_input(unforgivable)
-                    forgiven = data["components"][3]["components"][0]["value"]
-                    forgiven = interpret_boolean_input(forgiven)
+                    forgiven = False
+                    #forgiven = interpret_boolean_input(forgiven)
                     
                     # Retrieve the server, game, and channel IDs
                     server_id = str(raw_request["guild_id"])

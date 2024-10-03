@@ -1,7 +1,10 @@
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
+from boto3.dynamodb.types import TypeDeserializer
 from botocore.exceptions import ClientError
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import defaultdict
+import logging
 
 class DynamoDBHandler:
     def __init__(self, table_name):
@@ -67,11 +70,12 @@ class DynamoDBHandler:
                     'TargetUserId': target_user_id
                 },
                 # Define the update operation: append to KillRecords list
-                UpdateExpression="SET KillRecords = list_append(if_not_exists(KillRecords, :empty_list), :new_kill)",
+                UpdateExpression="SET KillRecords = list_append(if_not_exists(KillRecords, :empty_list), :new_kill), ServerId = :server_id",
                 # Define the values used in the UpdateExpression
                 ExpressionAttributeValues={
                     ':empty_list': [],  # Used if KillRecords doesn't exist yet
-                    ':new_kill': [kill_record]
+                    ':new_kill': [kill_record],
+                    ':server_id': server_id
                 },
                 # Specify that we want the updated values returned
                 ReturnValues="UPDATED_NEW"
@@ -137,10 +141,10 @@ class DynamoDBHandler:
         try:
             # Retrieve the kills for the given user and victim
             kill_records = self.get_kills(user_id, victim)
-            print(f"Kill records: {kill_records}")
+            print(f"Total kills for {user_id} on {victim}: {kill_records}")
             # Filter out the unforgiven kills
             unforgiven_kills = [kill for kill in kill_records if not kill['Forgiven']]
-            print(f"Unforgiven kills: {unforgiven_kills}")
+            print(f"Unforgiven kills for {user_id} on {victim} : {unforgiven_kills}")
             return unforgiven_kills
         except ClientError as e:
             print(f"Error retrieving unforgiven kills: {e.response['Error']['Message']}")
@@ -163,7 +167,7 @@ class DynamoDBHandler:
             # Calculate the final tally
             #print(f"Victim unforgiven count: {victim_unforgiven_count}")
             final_tally = victim_unforgiven_count + caller_unforgiven_count
-            
+            logging.info(f"Killer Unforgivens: {caller_unforgiven_count}, Victim Unforgivens {victim_unforgiven_count}, final tally: {final_tally}")
             return final_tally
         except ClientError as e:
             print(f"Error comparing kills: {e.response['Error']['Message']}")
@@ -206,7 +210,6 @@ class DynamoDBHandler:
         except ClientError as e:
             print(f"Error forgiving kill: {e.response['Error']['Message']}")
             raise
-
     def forgive_kill_by_index(self, user_id, target_user_id, index):
         try:
             # Get the current kill records
@@ -266,8 +269,7 @@ class DynamoDBHandler:
 
         except ClientError as e:
             print(f"Error retrieving kill count: {e.response['Error']['Message']}")
-            raise
-    
+            raise    
     def compare_kill_counts(self, user_id_1, user_id_2):
         """
         Compares the kill counts of two users and returns the difference.
@@ -290,9 +292,7 @@ class DynamoDBHandler:
         
         except ClientError as e:
             print(f"Error comparing kill counts: {e.response['Error']['Message']}")
-            raise
-
-    
+            raise    
     def get_top_killers(self, limit=10):
         try:
             # Scan the entire table
@@ -315,7 +315,6 @@ class DynamoDBHandler:
         except ClientError as e:
             print(f"Error getting top killers: {e.response['Error']['Message']}")
             raise
-
     def get_all_kills_for_user(self, user_id):
         try:
             # Query the DynamoDB table for all items with the specified UserId
@@ -329,9 +328,6 @@ class DynamoDBHandler:
             # If an error occurs, print it and re-raise the exception
             print(f"Error retrieving all kills: {e.response['Error']['Message']}")
             raise
-    
-    
-
 
     def undo_last_incident(self, user_id):
         try:
@@ -393,3 +389,141 @@ class DynamoDBHandler:
         except IndexError:
             # Handle the case where we try to pop from an empty list
             return "No incidents to undo."
+    
+    def get_wrapped_report(self, server_id, start_date, end_date):
+        """
+        Generate a Spotify Wrapped-style report for a server, summarizing monthly friendly-fire stats.
+        
+        :param server_id: The ID of the server for which the report is generated.
+        :param start_date: The starting date of the period to be analyzed.
+        :param end_date: The ending date of the period to be analyzed.
+        :return: A formatted string summarizing the stats.
+        """
+        logging.info(f"Querying records from {start_date.isoformat()} to {end_date.isoformat()} for server: {server_id}")
+
+        try:
+         
+            # Query the GSI
+            response = self.table.query(
+            IndexName='ServerId-index',
+            KeyConditionExpression=Key('ServerId').eq('487095283222839296'),
+                FilterExpression=Attr('KillRecords[0].Timestamp').between(
+            start_date.isoformat(),
+            end_date.isoformat()
+            ),
+            ProjectionExpression='UserId, TargetUserId, KillRecords[0].#ts',
+            ExpressionAttributeNames={
+                '#ts': 'Timestamp'
+            }
+            )
+
+            logging.info(f"DynamoDB Query Response: {response}")
+            
+            processed_items = []
+            for item in response['Items']:
+                processed_item = {
+                    'Timestamp': item['KillRecords'][0]['Timestamp'],
+                    'UserId': item['UserId'],
+                    'TargetUserId': item['TargetUserId']
+                }
+                processed_items.append(processed_item)
+
+            # Now processed_items contains the data in the desired format
+            logging.info(f"Processed Items: {processed_items}")
+
+
+            if not response['Items']:
+                logging.warning(f"No records found for server {server_id} between {start_date} and {end_date}")
+                return "No kills recorded this month. Your team must be getting along well!"
+            
+            # Process the query results
+            #deserializer = TypeDeserializer()
+            kill_stats = self._process_kill_records(processed_items, server_id, start_date, end_date)
+
+            # Build and return the Wrapped-style summary message
+            report = self._build_report(kill_stats, start_date, end_date)
+            return report
+        
+        except Exception as e:
+            logging.error(f"Error generating report: {e}")
+            return f"Error generating report: {e}"
+
+    def _process_kill_records(self, items, server_id, start_date, end_date):
+        """
+        Process kill records and generate statistics.
+        
+        :param items: List of items from DynamoDB response.
+        :param server_id: The ID of the server.
+        :param start_date: The starting date of the period to be analyzed.
+        :param end_date: The ending date of the period to be analyzed.
+        :return: A dictionary containing processed statistics.
+        """
+        stats = {
+            'kills_by_user': defaultdict(int),
+            'kills_by_victim': defaultdict(int),
+            'forgiveness_count': defaultdict(int),
+            'unforgiven_kills': defaultdict(lambda: defaultdict(int))
+        }
+
+        for record in items:
+            logging.info(f"Processing kill record: {record}")
+            #record = deserializer.deserialize(kill_record)
+            #if (start_date.isoformat() <= record['Timestamp'] <= end_date.isoformat()):
+                
+            killer_id = record['UserId']
+            victim_id = record['TargetUserId']
+            forgiven = record.get('Forgiven', {}).get('BOOL', False)
+            
+            # Track kill counts
+            stats['kills_by_user'][killer_id] += 1
+            stats['kills_by_victim'][victim_id] += 1
+
+            # Track forgiveness
+            if forgiven:
+                stats['forgiveness_count'][killer_id] += 1
+            else:
+                # Track unforgiven kills for grudge detection
+                stats['unforgiven_kills'][killer_id][victim_id] += 1
+
+        return stats
+
+
+    def _build_report(self, kill_stats, start_date, end_date):
+        """ Helper method to build the report string from the data """
+        month_year = start_date.strftime("%B %Y")
+        report = f"**🌟 Friendly-Fire Wrapped: Your Server's Epic Moments ({month_year}) 🌟**\n\n"
+
+        # Calculate total kills
+        total_kills = sum(kill_stats['kills_by_user'].values())
+
+        report += f"🎯 **In Case You Missed It: Your Server's Stats Are In!**\n"
+        report += f"Collectively, you all recorded a whopping **{total_kills} friendly-fire incidents** this month. That's a lot of accidental backstabs! 🔪\n\n"
+
+        if total_kills == 0:
+            report += f"💥 No one's been racking up kills...yet!\n"
+        else:
+            # Top Killer
+            top_killer = max(kill_stats['kills_by_user'], key=kill_stats['kills_by_user'].get)
+            report += f"🏆 **The 'Oops, My Bad' Award** goes to <@{top_killer}> with {kill_stats['kills_by_user'][top_killer]} friendly-fire incidents!\n"
+
+            # Most Forgiving
+            most_forgiving = max(kill_stats['forgiveness_count'], key=kill_stats['forgiveness_count'].get, default=None)
+            if most_forgiving:
+                report += f"😇 **The 'Turn the Other Cheek' Award** is earned by <@{most_forgiving}> for forgiving {kill_stats['forgiveness_count'][most_forgiving]} times!\n"
+
+            # Biggest Victim
+            biggest_victim = max(kill_stats['kills_by_victim'], key=kill_stats['kills_by_victim'].get)
+            report += f"🎯 **The 'Human Shield' Award** is reluctantly accepted by <@{biggest_victim}>, targeted {kill_stats['kills_by_victim'][biggest_victim]} times!\n"
+
+            # Biggest Grudge
+            biggest_grudge = max(
+                ((killer, victim, count) 
+                 for killer, victims in kill_stats['unforgiven_kills'].items() 
+                 for victim, count in victims.items()),
+                key=lambda x: x[2],
+                default=(None, None, 0)
+            )
+            if biggest_grudge[0]:
+                report += f"🧊 **The 'Ice in Their Veins' Award** goes to <@{biggest_grudge[1]}> for not forgiving <@{biggest_grudge[0]}> {biggest_grudge[2]} times!\n"
+
+        return report

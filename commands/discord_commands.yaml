@@ -2,6 +2,10 @@
   description: "Undo your latest /oops or /ettu"
   type: 1 # CHAT_INPUT
 
+- name: "report"
+  description: "Get a friendly-fire report for this server"
+  type: 1  # CHAT_INPUT
+
 - name: "grudges"
   description: "Compare grudges with another user"
   type: 1 # CHAT_INPUT
