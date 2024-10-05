@@ -2,7 +2,7 @@ import boto3
 from boto3.dynamodb.conditions import Key, Attr
 from boto3.dynamodb.types import TypeDeserializer
 from botocore.exceptions import ClientError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import logging
 
@@ -406,30 +406,31 @@ class DynamoDBHandler:
             # Query the GSI
             response = self.table.query(
             IndexName='ServerId-index',
-            KeyConditionExpression=Key('ServerId').eq('487095283222839296'),
-                FilterExpression=Attr('KillRecords[0].Timestamp').between(
-            start_date.isoformat(),
-            end_date.isoformat()
-            ),
-            ProjectionExpression='UserId, TargetUserId, KillRecords[0].#ts',
-            ExpressionAttributeNames={
-                '#ts': 'Timestamp'
-            }
+            KeyConditionExpression=Key('ServerId').eq(server_id),
+                FilterExpression=Attr('KillRecords').exists(),
+            ProjectionExpression='UserId, TargetUserId, KillRecords',
+
             )
 
             logging.info(f"DynamoDB Query Response: {response}")
             
             processed_items = []
             for item in response['Items']:
-                processed_item = {
-                    'Timestamp': item['KillRecords'][0]['Timestamp'],
-                    'UserId': item['UserId'],
-                    'TargetUserId': item['TargetUserId']
-                }
-                processed_items.append(processed_item)
+                for kill_record in item.get('KillRecords', []):
+                    timestamp = kill_record.get('Timestamp')
+                    if timestamp:
+                        kill_date = datetime.fromisoformat(timestamp).replace(tzinfo=timezone.utc)
+                        if start_date <= kill_date <= end_date:
+                            processed_item = {
+                                'Timestamp': timestamp,
+                                'UserId': item['UserId'],
+                                'TargetUserId': item['TargetUserId'],
+                                'ChannelId': kill_record.get('ChannelId', 'Unknown')  # Add this line
+                           }
+                            processed_items.append(processed_item)
 
             # Now processed_items contains the data in the desired format
-            logging.info(f"Processed Items: {processed_items}")
+            #logging.info(f"Processed Items: {processed_items}")
 
 
             if not response['Items']:
@@ -441,7 +442,7 @@ class DynamoDBHandler:
             kill_stats = self._process_kill_records(processed_items, server_id, start_date, end_date)
 
             # Build and return the Wrapped-style summary message
-            report = self._build_report(kill_stats, start_date, end_date)
+            report = self._build_report(kill_stats, processed_items, start_date, end_date)
             return report
         
         except Exception as e:
@@ -462,21 +463,35 @@ class DynamoDBHandler:
             'kills_by_user': defaultdict(int),
             'kills_by_victim': defaultdict(int),
             'forgiveness_count': defaultdict(int),
-            'unforgiven_kills': defaultdict(lambda: defaultdict(int))
+            'unforgiven_kills': defaultdict(lambda: defaultdict(int)),
+            'kills_by_channel': defaultdict(int),
+            'multi_kills': defaultdict(lambda: defaultdict(list))  
         }
 
         for record in items:
             logging.info(f"Processing kill record: {record}")
-            #record = deserializer.deserialize(kill_record)
-            #if (start_date.isoformat() <= record['Timestamp'] <= end_date.isoformat()):
                 
             killer_id = record['UserId']
             victim_id = record['TargetUserId']
             forgiven = record.get('Forgiven', {}).get('BOOL', False)
+            timestamp = datetime.fromisoformat(record['Timestamp'])            
+            channel_id = record['ChannelId']
             
             # Track kill counts
             stats['kills_by_user'][killer_id] += 1
             stats['kills_by_victim'][victim_id] += 1
+            stats['kills_by_channel'][channel_id] += 1  
+
+            # Track multi-kills
+            if victim_id in stats['multi_kills'][killer_id]:
+                last_kill_time = stats['multi_kills'][killer_id][victim_id][-1]
+                if timestamp - last_kill_time <= timedelta(hours=12):
+                    stats['multi_kills'][killer_id][victim_id].append(timestamp)
+                else:
+                    stats['multi_kills'][killer_id][victim_id] = [timestamp]
+            else:
+                stats['multi_kills'][killer_id][victim_id] = [timestamp]
+
 
             # Track forgiveness
             if forgiven:
@@ -488,7 +503,7 @@ class DynamoDBHandler:
         return stats
 
 
-    def _build_report(self, kill_stats, start_date, end_date):
+    def _build_report(self, kill_stats, processed_items, start_date, end_date):
         """ Helper method to build the report string from the data """
         month_year = start_date.strftime("%B %Y")
         report = f"**🌟 Friendly-Fire Wrapped: Your Server's Epic Moments ({month_year}) 🌟**\n\n"
@@ -498,6 +513,14 @@ class DynamoDBHandler:
 
         report += f"🎯 **In Case You Missed It: Your Server's Stats Are In!**\n"
         report += f"Collectively, you all recorded a whopping **{total_kills} friendly-fire incidents** this month. That's a lot of accidental backstabs! 🔪\n\n"
+
+        # Add channel insights
+        if kill_stats['kills_by_channel']:
+            top_channel = max(kill_stats['kills_by_channel'], key=kill_stats['kills_by_channel'].get)
+            top_channel_kills = kill_stats['kills_by_channel'][top_channel]
+            report += f"\n🔥 **Danger Zone!** 🔥 The channel <#{top_channel}> is our server's friendly-fire hotspot with {top_channel_kills} incidents! Maybe it's time for some team-building exercises there?\n"
+        else:
+            report += "\n🏞️ All channels seem equally peaceful (or chaotic). No danger zones detected!\n"
 
         if total_kills == 0:
             report += f"💥 No one's been racking up kills...yet!\n"
@@ -518,12 +541,69 @@ class DynamoDBHandler:
             # Biggest Grudge
             biggest_grudge = max(
                 ((killer, victim, count) 
-                 for killer, victims in kill_stats['unforgiven_kills'].items() 
-                 for victim, count in victims.items()),
+                for killer, victims in kill_stats['unforgiven_kills'].items() 
+                for victim, count in victims.items()),
                 key=lambda x: x[2],
                 default=(None, None, 0)
             )
             if biggest_grudge[0]:
                 report += f"🧊 **The 'Ice in Their Veins' Award** goes to <@{biggest_grudge[1]}> for not forgiving <@{biggest_grudge[0]}> {biggest_grudge[2]} times!\n"
 
+            # Multi-kill insights
+            multi_kill_insights = self.generate_multi_kill_insights(processed_items)
+            if multi_kill_insights:
+                report += "\n**Multi-Kill Madness!**\n"
+                for insight in multi_kill_insights:
+                    report += insight + "\n"
+
         return report
+
+    def generate_multi_kill_insights(self, kills):
+        logging.info(f"Starting to generate multi-kill insights. Total kills to process: {len(kills)}")
+        multi_kill_insights = []
+        
+        # Group kills by killer and victim
+        kill_groups = {}
+        for kill in kills:
+            key = (kill['UserId'], kill['TargetUserId'])
+            if key not in kill_groups:
+                kill_groups[key] = []
+            kill_groups[key].append(kill)
+        
+        logging.info(f"Grouped kills into {len(kill_groups)} killer-victim pairs")
+
+        for (killer, victim), group in kill_groups.items():
+            logging.debug(f"Processing group: Killer {killer}, Victim {victim}, Kills: {len(group)}")
+            if len(group) >= 3:
+                # Sort kills by timestamp
+                sorted_kills = sorted(group, key=lambda k: datetime.fromisoformat(k['Timestamp']))
+                
+                # Calculate the total time window
+                first_kill = datetime.fromisoformat(sorted_kills[0]['Timestamp'])
+                last_kill = datetime.fromisoformat(sorted_kills[-1]['Timestamp'])
+                total_time_diff = last_kill - first_kill
+                
+                logging.debug(f"Time window for group: {last_kill} - {first_kill} = {total_time_diff}")
+
+                if total_time_diff <= timedelta(hours=12):
+                    # Format the time difference
+                    if total_time_diff.total_seconds() < 60:
+                        time_str = f"{int(total_time_diff.total_seconds())} seconds"
+                    elif total_time_diff.total_seconds() < 3600:
+                        time_str = f"{int(total_time_diff.total_seconds() / 60)} minutes"
+                    else:
+                        time_str = f"{total_time_diff.total_seconds() / 3600:.1f} hours"
+                    
+                    # Generate the insight
+                    kill_count = len(group)
+                    kill_type = {3: "Triple", 4: "Quadruple", 5: "Quintuple"}.get(kill_count, "Multi")
+                    insight = f"We have a {kill_type} Kill champion! <@{killer}> went on a rampage against <@{victim}>, scoring {kill_count} kills in {time_str}! Impressive... or concerning? 🤔"
+                    multi_kill_insights.append(insight)
+                    logging.info(f"Generated multi-kill insight: {insight}")
+                else:
+                    logging.debug(f"Group not qualified for multi-kill (time window > 12 hours)")
+            else:
+                logging.debug(f"Group not qualified for multi-kill (less than 3 kills)")
+
+        logging.info(f"Finished generating multi-kill insights. Total insights: {len(multi_kill_insights)}")
+        return multi_kill_insights
