@@ -36,3 +36,16 @@
       type: 6 # USER
       description: "The user who killed you"
       required: true
+
+- name: "grudgereport"
+  description: "Generate a report of grudges between two users"
+  type: 1 # CHAT_INPUT
+  options:
+    - name: "user1"
+      type: 6 # USER
+      description: "First user"
+      required: true
+    - name: "user2"
+      type: 6 # USER
+      description: "Second user (or leave blank for self)"
+      required: false

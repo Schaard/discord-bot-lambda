@@ -55,6 +55,9 @@ def sanitize_input(user_input: str) -> str:
     # Strip leading and trailing whitespace
     sanitized_input = user_input.strip()
 
+    # Strip leading and trailing whitespace
+    sanitized_input = user_input.strip('"\'')
+
     # Remove control characters like newlines, tabs, etc.
     sanitized_input = re.sub(r'[\n\r\t]', ' ', sanitized_input)
 
@@ -650,6 +653,36 @@ def interact(raw_request):
                             message_content = "The Hall of Shame is empty. Be the first to make a mistake!"
                     except Exception as e:
                         message_content = f"Error retrieving Hall of Shame: {str(e)}"
+                case "grudgereport":
+                    try:
+                        options = data.get("options", [])
+
+                        grudge_depth = 8
+                        if len(options) == 1:
+                            # Report between calling user and specified user
+                            target_user = options[0]["value"]
+                            report = db.generate_grudge_report(user_id, target_user, grudge_depth)
+                        elif len(options) == 2:
+                            # Report between two specified users
+                            user1 = options[0]["value"]
+                            user2 = options[1]["value"]
+                            report = db.generate_grudge_report(user1, user2, grudge_depth)
+                        else:
+                            raise ValueError("Invalid number of arguments for grudgereport")
+                        logging.info(f"Grudge report generated: {report}")
+                        response_data = {
+                            "type": 4,
+                            "data": {"content": report}
+                        }
+                    except Exception as e:
+                        logger.error(f"Error generating grudge report: {str(e)}")
+                        response_data = {
+                            "type": 4,
+                            "data": {"content": f"Error generating grudge report: {str(e)}"}
+                        }
+                    return jsonify(response_data)
+                # ... other commands ...
+                    
                 case _:
                     message_content = "Command recognized but not implemented yet."
             
@@ -695,6 +728,7 @@ def interact(raw_request):
                     cause_of_death = data["components"][0]["components"][0]["value"]
                     cause_of_death = sanitize_input(cause_of_death)
                     last_words = data["components"][1]["components"][0]["value"]
+                    last_words = sanitize_input(last_words)
                     unforgivable = data["components"][2]["components"][0]["value"]
                     unforgivable = interpret_boolean_input(unforgivable)
                     
@@ -776,7 +810,9 @@ def interact(raw_request):
 
                     # Process other modal inputs
                     cause_of_death = data["components"][0]["components"][0]["value"]
+                    cause_of_death = sanitize_input(cause_of_death)
                     last_words = data["components"][1]["components"][0]["value"]
+                    last_words = sanitize_input(last_words)
                     unforgivable = data["components"][2]["components"][0]["value"]
                     unforgivable = interpret_boolean_input(unforgivable)
                     forgiven = False

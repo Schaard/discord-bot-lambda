@@ -5,6 +5,8 @@ from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import logging
+import os
+import requests
 
 class DynamoDBHandler:
     def __init__(self, table_name):
@@ -137,14 +139,29 @@ class DynamoDBHandler:
             print(f"Error retrieving kills: {e.response['Error']['Message']}")
             raise
     
+    def get_name_fromid(self, user_id):
+        url = f"https://discord.com/api/v10/users/{user_id}"
+        headers = {
+            "Authorization": f"Bot {os.environ.get('TOKEN')}"
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            return user_data['username']  # Returns the username
+        else:
+            print(f"Failed to fetch user: {response.status_code} - {response.text}")
+            return "Unknown User"    
+        
     def get_unforgivens_on_user(self, user_id, victim):
         try:
             # Retrieve the kills for the given user and victim
             kill_records = self.get_kills(user_id, victim)
-            print(f"Total kills for {user_id} on {victim}: {kill_records}")
+            #print(f"Total kills for {user_id} on {victim}: {kill_records}")
             # Filter out the unforgiven kills
             unforgiven_kills = [kill for kill in kill_records if not kill['Forgiven']]
-            print(f"Unforgiven kills for {user_id} on {victim} : {unforgiven_kills}")
+            #print(f"Unforgiven kills for {user_id} on {victim} : {unforgiven_kills}")
             return unforgiven_kills
         except ClientError as e:
             print(f"Error retrieving unforgiven kills: {e.response['Error']['Message']}")
@@ -167,7 +184,7 @@ class DynamoDBHandler:
             # Calculate the final tally
             #print(f"Victim unforgiven count: {victim_unforgiven_count}")
             final_tally = victim_unforgiven_count + caller_unforgiven_count
-            logging.info(f"Killer Unforgivens: {caller_unforgiven_count}, Victim Unforgivens {victim_unforgiven_count}, final tally: {final_tally}")
+            #logging.info(f"Killer Unforgivens: {caller_unforgiven_count}, Victim Unforgivens {victim_unforgiven_count}, final tally: {final_tally}")
             return final_tally
         except ClientError as e:
             print(f"Error comparing kills: {e.response['Error']['Message']}")
@@ -418,6 +435,7 @@ class DynamoDBHandler:
             for item in response['Items']:
                 for kill_record in item.get('KillRecords', []):
                     timestamp = kill_record.get('Timestamp')
+                    forgiveness = kill_record.get('Forgiven', False)
                     if timestamp:
                         kill_date = datetime.fromisoformat(timestamp).replace(tzinfo=timezone.utc)
                         if start_date <= kill_date <= end_date:
@@ -425,7 +443,10 @@ class DynamoDBHandler:
                                 'Timestamp': timestamp,
                                 'UserId': item['UserId'],
                                 'TargetUserId': item['TargetUserId'],
-                                'ChannelId': kill_record.get('ChannelId', 'Unknown')  # Add this line
+                                'ChannelId': kill_record.get('ChannelId', 'Unknown'),
+                                'Forgiven': forgiveness,
+                                'CauseOfDeath': item.get('CauseOfDeath', None),
+                                'LastWords': item.get('LastWords', None)
                            }
                             processed_items.append(processed_item)
 
@@ -463,9 +484,12 @@ class DynamoDBHandler:
             'kills_by_user': defaultdict(int),
             'kills_by_victim': defaultdict(int),
             'forgiveness_count': defaultdict(int),
+            'forgiveness_received': defaultdict(int),
             'unforgiven_kills': defaultdict(lambda: defaultdict(int)),
             'kills_by_channel': defaultdict(int),
-            'multi_kills': defaultdict(lambda: defaultdict(list))  
+            'multi_kills': defaultdict(lambda: defaultdict(list)),
+            'first_incident': None,
+            'last_incident': None  
         }
 
         for record in items:
@@ -473,10 +497,28 @@ class DynamoDBHandler:
                 
             killer_id = record['UserId']
             victim_id = record['TargetUserId']
-            forgiven = record.get('Forgiven', {}).get('BOOL', False)
+            forgiven = record.get('Forgiven', False)
             timestamp = datetime.fromisoformat(record['Timestamp'])            
             channel_id = record['ChannelId']
             
+            # Track first and last incidents
+            if stats['first_incident'] is None or timestamp < stats['first_incident']['timestamp']:
+                stats['first_incident'] = {
+                    'timestamp': timestamp,
+                    'killer': killer_id,
+                    'victim': victim_id,
+                    'cause_of_death': record.get('CauseOfDeath'),  # Use .get() to safely handle missing keys
+                    'last_words': record.get('LastWords')
+                }
+            if stats['last_incident'] is None or timestamp > stats['last_incident']['timestamp']:
+                stats['last_incident'] = {
+                    'timestamp': timestamp,
+                    'killer': killer_id,
+                    'victim': victim_id,
+                    'cause_of_death': record.get('CauseOfDeath'),  # Use .get() to safely handle missing keys
+                    'last_words': record.get('LastWords')
+                }
+
             # Track kill counts
             stats['kills_by_user'][killer_id] += 1
             stats['kills_by_victim'][victim_id] += 1
@@ -495,48 +537,79 @@ class DynamoDBHandler:
 
             # Track forgiveness
             if forgiven:
-                stats['forgiveness_count'][killer_id] += 1
+                stats['forgiveness_count'][victim_id] += 1  # The victim is doing the forgiving
+                stats['forgiveness_received'][killer_id] += 1 # The killer is being forgiven
             else:
                 # Track unforgiven kills for grudge detection
                 stats['unforgiven_kills'][killer_id][victim_id] += 1
 
         return stats
+    def get_kills_bidirectional(self, user_id, target_user_id):
+        try:
+            response1 = self.table.query(
+                KeyConditionExpression=Key('UserId').eq(user_id) & Key('TargetUserId').eq(target_user_id)
+            )
+            response2 = self.table.query(
+                KeyConditionExpression=Key('UserId').eq(target_user_id) & Key('TargetUserId').eq(user_id)
+            )
+            return response1.get('Items', []) + response2.get('Items', [])
 
+        except ClientError as e:
+            print(f"Error retrieving kills: {e.response['Error']['Message']}")
+            raise
 
     def _build_report(self, kill_stats, processed_items, start_date, end_date):
         """ Helper method to build the report string from the data """
         month_year = start_date.strftime("%B %Y")
-        report = f"**🌟 Friendly-Fire Wrapped: Your Server's Epic Moments ({month_year}) 🌟**\n\n"
+        report = f"**🌟 Friendly-Fire Wrapped: Your Server's Month in Grudges ({month_year}) 🌟**\n"
 
         # Calculate total kills
         total_kills = sum(kill_stats['kills_by_user'].values())
+        report += f"🎯 In Case You Missed It: Your Server's Stats Are In! 🎯 "
+        report += f"\n Collectively, you recorded a whopping **{total_kills} friendly-fire incidents** this month.\n"
 
-        report += f"🎯 **In Case You Missed It: Your Server's Stats Are In!**\n"
-        report += f"Collectively, you all recorded a whopping **{total_kills} friendly-fire incidents** this month. That's a lot of accidental backstabs! 🔪\n\n"
+        # Add first and last incident information
+        if kill_stats['first_incident']:
+            first = kill_stats['first_incident']
+            report += f"\n🔥 **(Friendly) Firestarter Award: First Kill of the Month** 🔥 "
+            report += f"On {first['timestamp'].strftime('%B %d')} at {first['timestamp'].strftime('%I:%M %p')}, "
+            report += f"<@{first['killer']}> kicked off the month by taking out <@{first['victim']}>!"
+            
+            if first.get('cause_of_death'):
+                report += f" The cause? {first['cause_of_death']}."
+            
+            if first.get('last_words'):
+                report += f" This first last words were: \"{first['last_words']}\""
 
         # Add channel insights
         if kill_stats['kills_by_channel']:
             top_channel = max(kill_stats['kills_by_channel'], key=kill_stats['kills_by_channel'].get)
             top_channel_kills = kill_stats['kills_by_channel'][top_channel]
-            report += f"\n🔥 **Danger Zone!** 🔥 The channel <#{top_channel}> is our server's friendly-fire hotspot with {top_channel_kills} incidents! Maybe it's time for some team-building exercises there?\n"
+            report += f"\n\n💥 **The 'Danger Zone' Award** 💥 The channel <#{top_channel}> is our server's friendly-fire hotspot with {top_channel_kills} incidents!\n"
         else:
-            report += "\n🏞️ All channels seem equally peaceful (or chaotic). No danger zones detected!\n"
+            report += "\n🏞️ All channels seem equally peaceful (or chaotic). No danger zones detected! 🏞️\n"
 
         if total_kills == 0:
-            report += f"💥 No one's been racking up kills...yet!\n"
+            report += f"☮️ No one's been racking up kills...yet! ☮️\n"
         else:
             # Top Killer
             top_killer = max(kill_stats['kills_by_user'], key=kill_stats['kills_by_user'].get)
-            report += f"🏆 **The 'Oops, My Bad' Award** goes to <@{top_killer}> with {kill_stats['kills_by_user'][top_killer]} friendly-fire incidents!\n"
+            report += f"🏆 **The 'Oops, My Bad' Award** 🏆 goes to <@{top_killer}> with {kill_stats['kills_by_user'][top_killer]} friendly-fire incidents!\n"
 
             # Most Forgiving
             most_forgiving = max(kill_stats['forgiveness_count'], key=kill_stats['forgiveness_count'].get, default=None)
             if most_forgiving:
-                report += f"😇 **The 'Turn the Other Cheek' Award** is earned by <@{most_forgiving}> for forgiving {kill_stats['forgiveness_count'][most_forgiving]} times!\n"
+                report += f"😇 **The 'Turn the Other Cheek' Award** 😇 is earned by <@{most_forgiving}> for forgiving {kill_stats['forgiveness_count'][most_forgiving]} times!\n"
 
+            # Most Forgiven (new code)
+            most_forgiven = max(kill_stats['forgiveness_received'], key=kill_stats['forgiveness_received'].get, default=None)
+            if most_forgiven:
+                report += f"🧲 **The 'Forgiveness Magnet' Award** 🧲 goes to <@{most_forgiven}> for being forgiven {kill_stats['forgiveness_received'][most_forgiven]} times!\n"
+            else:
+                report += "���️ No one's been forgiven...yet! ���️\n"
             # Biggest Victim
             biggest_victim = max(kill_stats['kills_by_victim'], key=kill_stats['kills_by_victim'].get)
-            report += f"🎯 **The 'Human Shield' Award** is reluctantly accepted by <@{biggest_victim}>, targeted {kill_stats['kills_by_victim'][biggest_victim]} times!\n"
+            report += f"☠️ **The 'Human Shield' Award** ☠️ is reluctantly accepted by <@{biggest_victim}>, killed {kill_stats['kills_by_victim'][biggest_victim]} times!\n"
 
             # Biggest Grudge
             biggest_grudge = max(
@@ -547,19 +620,33 @@ class DynamoDBHandler:
                 default=(None, None, 0)
             )
             if biggest_grudge[0]:
-                report += f"🧊 **The 'Ice in Their Veins' Award** goes to <@{biggest_grudge[1]}> for not forgiving <@{biggest_grudge[0]}> {biggest_grudge[2]} times!\n"
+                report += f"🧊 **The 'Ice in Their Veins' Award** 🧊 goes to <@{biggest_grudge[1]}> for not forgiving <@{biggest_grudge[0]}> {biggest_grudge[2]} times!\n"
 
             # Multi-kill insights
             multi_kill_insights = self.generate_multi_kill_insights(processed_items)
             if multi_kill_insights:
-                report += "\n**Multi-Kill Madness!**\n"
+                report += "🤯 **The Team Multi-Kill Award** 🤯 "
                 for insight in multi_kill_insights:
                     report += insight + "\n"
+
+            if kill_stats['last_incident']:
+                last = kill_stats['last_incident']
+                report += f"\n🏁 **The Month's Final Betrayal** 🏁 "
+                report += f"The final friendly-fire of {month_year} occurred on {last['timestamp'].strftime('%B %d')} at {last['timestamp'].strftime('%I:%M %p')}, "
+                report += f"when <@{last['killer']}> caught <@{last['victim']}> off-guard."
+                
+                if last.get('cause_of_death'):
+                    report += f" The finishing blow? {last['cause_of_death']}."
+                
+                if last.get('last_words'):
+                    report += f" We'll always remember their final words: \"{last['last_words']}\""
+                
+            report += "\n"
 
         return report
 
     def generate_multi_kill_insights(self, kills):
-        logging.info(f"Starting to generate multi-kill insights. Total kills to process: {len(kills)}")
+        #logging.info(f"Starting to generate multi-kill insights. Total kills to process: {len(kills)}")
         multi_kill_insights = []
         
         # Group kills by killer and victim
@@ -570,7 +657,7 @@ class DynamoDBHandler:
                 kill_groups[key] = []
             kill_groups[key].append(kill)
         
-        logging.info(f"Grouped kills into {len(kill_groups)} killer-victim pairs")
+        #logging.info(f"Grouped kills into {len(kill_groups)} killer-victim pairs")
 
         for (killer, victim), group in kill_groups.items():
             logging.debug(f"Processing group: Killer {killer}, Victim {victim}, Kills: {len(group)}")
@@ -583,7 +670,7 @@ class DynamoDBHandler:
                 last_kill = datetime.fromisoformat(sorted_kills[-1]['Timestamp'])
                 total_time_diff = last_kill - first_kill
                 
-                logging.debug(f"Time window for group: {last_kill} - {first_kill} = {total_time_diff}")
+                #logging.debug(f"Time window for group: {last_kill} - {first_kill} = {total_time_diff}")
 
                 if total_time_diff <= timedelta(hours=12):
                     # Format the time difference
@@ -597,9 +684,9 @@ class DynamoDBHandler:
                     # Generate the insight
                     kill_count = len(group)
                     kill_type = {3: "Triple", 4: "Quadruple", 5: "Quintuple"}.get(kill_count, "Multi")
-                    insight = f"We have a {kill_type} Kill champion! <@{killer}> went on a rampage against <@{victim}>, scoring {kill_count} kills in {time_str}! Impressive... or concerning? 🤔"
+                    insight = f"{kill_type} kill! <@{killer}> went on a rampage against <@{victim}>, scoring {kill_count} kills in {time_str}! Impressive... or concerning? 🤔"
                     multi_kill_insights.append(insight)
-                    logging.info(f"Generated multi-kill insight: {insight}")
+                    #logging.info(f"Generated multi-kill insight: {insight}")
                 else:
                     logging.debug(f"Group not qualified for multi-kill (time window > 12 hours)")
             else:
@@ -607,3 +694,112 @@ class DynamoDBHandler:
 
         logging.info(f"Finished generating multi-kill insights. Total insights: {len(multi_kill_insights)}")
         return multi_kill_insights
+    
+    def generate_grudge_report(self, user1, user2, limit=None):
+        #IDEA: RESTRICT SECOND ARGUMENT TO PREMIUM 
+        try:
+            kill_data = self.get_kills_bidirectional(user1, user2)
+            
+            incidents = []
+            # Process kills from user1 to user2
+            for kill in kill_data[0].get('KillRecords', []):
+                incidents.append({
+                    'UserId': user1,
+                    'TargetUserId': user2,
+                    'Timestamp': kill.get('Timestamp'),
+                    'CauseOfDeath': kill.get('CauseOfDeath', 'Unknown'),
+                    'LastWords': kill.get('LastWords', 'None'),
+                    'Forgiven': kill.get('Forgiven', False)
+                })
+            # Process kills from user2 to user1
+            for kill in kill_data[1].get('KillRecords', []):
+                incidents.append({
+                    'UserId': user2,
+                    'TargetUserId': user1,
+                    'Timestamp': kill.get('Timestamp'),
+                    'CauseOfDeath': kill.get('CauseOfDeath', 'Unknown'),
+                    'LastWords': kill.get('LastWords', ''),
+                    'Forgiven': kill.get('Forgiven', False)
+                })
+
+            logging.info(f"Processed incidents: {incidents}")
+
+            # Sort incidents by timestamp
+            incidents.sort(key=lambda x: x.get('Timestamp', ''), reverse=True)
+
+            # Apply limit if specified
+            if limit is not None:
+                incidents = incidents[:limit]
+            
+            if not incidents:
+                return f"No incidents found between these two users."
+            
+            # Use get_named_fromid to get usernames
+            print(incidents)
+            left_user_id = incidents[0]['UserId']
+            right_user_id = incidents[0]['TargetUserId']
+            left_name = self.get_name_fromid(left_user_id)
+            right_name = self.get_name_fromid(right_user_id)
+            #print(f"Killer: {killer_name}, Victim: {victim_name}")
+            report = f"📜 Grudge Report: {left_name} vs {right_name} 📜\n\n"
+            if limit is not None:
+                report += f"(Showing the {min(limit, len(incidents))} most recent incidents)\n\n"
+            else:
+                report += "\n"
+
+            # Define column widths
+            col_widths = {
+                'date': 20,
+                'killer': 20,
+                'victim': 20,
+                'cause': 20,
+                'last_words': 30,
+                'forgiven': 10
+            }
+
+            # Create header
+            header = (
+                f"{'Date':{col_widths['date']}} | "
+                f"{'Killer':{col_widths['killer']}} | "
+                f"{'Victim':{col_widths['victim']}} | "
+                f"{'Cause of Death':{col_widths['cause']}} | "
+                f"{'Last Words':{col_widths['last_words']}} | "
+                f"{'Forgiven':{col_widths['forgiven']}}"
+            )
+            report += header + "\n"
+            report += "-" * len(header) + "\n"
+
+            # Add incidents
+            for incident in incidents:
+                timestamp = datetime.fromisoformat(incident['Timestamp'])
+                
+                killer_id = incident['UserId']
+                victim_id = incident['TargetUserId']
+                
+                if killer_id == left_user_id and victim_id == right_user_id:
+                    killer_name = left_name
+                    victim_name = right_name
+                elif killer_id == right_user_id and victim_id == left_user_id:
+                    killer_name = right_name
+                    victim_name = left_name
+                else:
+                    logging.warning(f"Unexpected id found in incident record: {incident}")
+
+                cause_of_death = incident.get('CauseOfDeath', 'Unknown')
+                last_words = incident.get('LastWords', 'None')
+                forgiven = "Yes" if incident.get('Forgiven', False) else "No"
+
+                row = (
+                    f"{timestamp.strftime('%Y-%m-%d %H:%M:%S'):{col_widths['date']}} | "
+                    f"{killer_name:{col_widths['killer']}} | "
+                    f"{victim_name:{col_widths['victim']}} | "
+                    f"{cause_of_death[:col_widths['cause']]:{col_widths['cause']}} | "
+                    f"{last_words[:col_widths['last_words']]:{col_widths['last_words']}} | "
+                    f"{forgiven:{col_widths['forgiven']}}"
+                )
+                report += row + "\n"
+            
+            return f"```\n{report}\n```"
+        except Exception as e:
+            logging.error(f"Error in generate_grudge_report: {str(e)}", exc_info=True)
+            return f"An error occurred while generating the grudge report: {str(e)}"
