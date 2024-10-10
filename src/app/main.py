@@ -88,7 +88,7 @@ async def interactions():
     print(f"👉 Request: {request.json}")
     raw_request = request.json
     final_response = interact(raw_request)
-    print(f"👈 Response: {final_response}")
+    print(f"👈 Response: {final_response.json}")
     return final_response
 
 def remove_article(description):
@@ -392,6 +392,12 @@ def handle_forgive_button(raw_request):
         forgiveness_message = f"{get_name_fromid(victim)} has refused to forgive {forgivee_name}."
     
     start_message_step_function(raw_request, [forgiveness_message], [], True)    
+def is_valid_json(data):
+    try:
+        json.loads(data)
+        return True
+    except json.JSONDecodeError:
+        return False
 def handle_component_interaction(raw_request):
     data = raw_request["data"]
     custom_id = data["custom_id"]
@@ -417,8 +423,46 @@ def handle_component_interaction(raw_request):
                     "content": "Sorry, you're not allowed to use this button.",
                     "flags": 64  # EPHEMERAL - only visible to the user who clicked
                 }
-            })
+            })        
+    elif custom_id.startswith("grudgereport_pagination_"):
+        # Parse the custom_id to extract necessary information
+        _, __, user1, user2, page = custom_id.split("_")
+        page = int(page)
+        #logging.info(f"Pagination requested for {user1} and {user2} at page {page}")
+        report, has_more = db.generate_grudge_report(user1, user2, 8, page)
         
+        components = []
+        if has_more:
+            components = [               
+                {
+                    "type": 1,  # ACTION_ROW
+                    "components": [
+                        {
+                            "type": 2,  # BUTTON
+                            "style": 1,  # PRIMARY
+                            "label": "Older",
+                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page+1}"
+                        },
+                        {
+                            "type": 2,  # BUTTON
+                            "style": 1,  # PRIMARY
+                            "label": "Newer",
+                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page-1}",
+                            "disabled": page == 0  # Disable if it's the first page
+                        }
+                    ]
+                }
+            ]
+
+        response_data = {
+            "type": 7,  # CHANNEL_MESSAGE_WITH_SOURCE
+            "data": {
+                "content": report,
+                "components": components
+            }
+        }
+        logging.info(f"Pagination response: {response_data}")
+        return response_data    
     elif custom_id.startswith("forgive_") or custom_id.startswith("grudge_"):
         logger.info(f"{custom_id}")
         custom_id_list = custom_id.split("_")
@@ -656,23 +700,48 @@ def interact(raw_request):
                 case "grudgereport":
                     try:
                         options = data.get("options", [])
-
+                        page = 0  # Default to first page
+                        logging.info(f"Number of options: {len(options)}")
                         grudge_depth = 8
                         if len(options) == 1:
                             # Report between calling user and specified user
                             target_user = options[0]["value"]
-                            report = db.generate_grudge_report(user_id, target_user, grudge_depth)
+                            user1 = user_id
+                            user2 = target_user
+                            report, has_more = db.generate_grudge_report(user_id, target_user, grudge_depth)
                         elif len(options) == 2:
                             # Report between two specified users
                             user1 = options[0]["value"]
                             user2 = options[1]["value"]
-                            report = db.generate_grudge_report(user1, user2, grudge_depth)
+                            report, has_more = db.generate_grudge_report(user1, user2, grudge_depth)
                         else:
                             raise ValueError("Invalid number of arguments for grudgereport")
-                        logging.info(f"Grudge report generated: {report}")
+                        #logging.info(f"Grudge report generated: {report}")
+                        
+                        #Make the button if there's more!
+                        components = []
+                        if has_more:
+                            logging.info("Has more")
+                            components = [
+                                {
+                                    "type": 1,  # ACTION_ROW
+                                    "components": [
+                                        {
+                                            "type": 2,  # BUTTON
+                                            "style": 1,  # PRIMARY
+                                            "label": "Older",
+                                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page+1}"
+                                        }
+                                    ]
+                                }
+                            ]
+                        
                         response_data = {
                             "type": 4,
-                            "data": {"content": report}
+                            "data": {
+                                "content": report,
+                                "components": components if has_more else []
+                                }
                         }
                     except Exception as e:
                         logger.error(f"Error generating grudge report: {str(e)}")
@@ -680,9 +749,8 @@ def interact(raw_request):
                             "type": 4,
                             "data": {"content": f"Error generating grudge report: {str(e)}"}
                         }
-                    return jsonify(response_data)
-                # ... other commands ...
                     
+                    return jsonify(response_data)
                 case _:
                     message_content = "Command recognized but not implemented yet."
             
@@ -696,7 +764,9 @@ def interact(raw_request):
 
             #return strings as ethereal messages 
             result = handle_component_interaction(raw_request)
+            logger.info(f"Message Result: {result}")
             if isinstance(result, str):
+                logger.info("Responding with ephemeral message")
                 return jsonify({
                 "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
                 "data": {
@@ -704,8 +774,12 @@ def interact(raw_request):
                     "flags": 64  # EPHEMERAL
                 }
             })
+            elif isinstance(result, dict):
+                logger.info("Responding with pre-formed JSON response")
+                return jsonify(result)
             
             #If not string, Respond immediately with 202 Accepted
+            logger.info(f"Responding with 202!!!!!!!!!!")
             response = Response('', 202)
             return response            
         case 4:  # APPLICATION_COMMAND_AUTOCOMPLETE

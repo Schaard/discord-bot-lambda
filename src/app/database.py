@@ -695,7 +695,7 @@ class DynamoDBHandler:
         logging.info(f"Finished generating multi-kill insights. Total insights: {len(multi_kill_insights)}")
         return multi_kill_insights
     
-    def generate_grudge_report(self, user1, user2, limit=None):
+    def generate_grudge_report(self, user1, user2, limit=8, page=0):
         #IDEA: RESTRICT SECOND ARGUMENT TO PREMIUM 
         try:
             kill_data = self.get_kills_bidirectional(user1, user2)
@@ -727,15 +727,20 @@ class DynamoDBHandler:
             # Sort incidents by timestamp
             incidents.sort(key=lambda x: x.get('Timestamp', ''), reverse=True)
 
-            # Apply limit if specified
-            if limit is not None:
-                incidents = incidents[:limit]
+            # Apply pagination
+            start_index = page * limit
+            end_index = start_index + limit
+            paginated_incidents = incidents[start_index:end_index]
+            
+            # Check if there are more incidents
+            has_more = len(incidents) > end_index
             
             if not incidents:
                 return f"No incidents found between these two users."
             
             # Use get_named_fromid to get usernames
-            print(incidents)
+            print(f" Non-paginated incidents: {incidents}")
+            print(f" Paginated incidents: {paginated_incidents}")
             left_user_id = incidents[0]['UserId']
             right_user_id = incidents[0]['TargetUserId']
             left_name = self.get_name_fromid(left_user_id)
@@ -743,10 +748,15 @@ class DynamoDBHandler:
             #print(f"Killer: {killer_name}, Victim: {victim_name}")
             report = f"📜 Grudge Report: {left_name} vs {right_name} 📜\n\n"
             if limit is not None:
-                report += f"(Showing the {min(limit, len(incidents))} most recent incidents)\n\n"
-            else:
-                report += "\n"
-
+                total_incidents = len(incidents)
+                start_index = page * limit
+                end_index = min(start_index + limit, total_incidents)
+                
+                report += f"(Showing incidents {start_index + 1}-{end_index} out of {total_incidents})\n"
+                if has_more:
+                    report += f"(Page {page + 1}, more incidents available)\n"
+                else:
+                    report += f"(Page {page + 1}, last page)\n"
             # Define column widths
             col_widths = {
                 'date': 20,
@@ -770,7 +780,7 @@ class DynamoDBHandler:
             report += "-" * len(header) + "\n"
 
             # Add incidents
-            for incident in incidents:
+            for incident in paginated_incidents:
                 timestamp = datetime.fromisoformat(incident['Timestamp'])
                 
                 killer_id = incident['UserId']
@@ -798,8 +808,8 @@ class DynamoDBHandler:
                     f"{forgiven:{col_widths['forgiven']}}"
                 )
                 report += row + "\n"
-            
-            return f"```\n{report}\n```"
+            logging.info(f"Generated grudge report: {report} and has_more: {has_more}")
+            return f"```\n{report}\n```", has_more
         except Exception as e:
             logging.error(f"Error in generate_grudge_report: {str(e)}", exc_info=True)
             return f"An error occurred while generating the grudge report: {str(e)}"
