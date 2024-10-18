@@ -1,19 +1,6 @@
-- name: "undoops"
-  description: "Undo your latest /oops or /ettu"
-  type: 1 # CHAT_INPUT
-
 - name: "report"
   description: "Get a friendly-fire report for this server"
   type: 1  # CHAT_INPUT
-
-- name: "grudges"
-  description: "Compare grudges with another user"
-  type: 1 # CHAT_INPUT
-  options:
-    - name: "user"
-      type: 6 # USER
-      description: "The user to compare grudges"
-      required: true
 
 - name: "hallofshame"
   description: "Show the most egregious teamkillers"
@@ -37,7 +24,7 @@
       description: "The user who killed you"
       required: true
 
-- name: "grudgereport"
+- name: "grudges"
   description: "Generate a report of grudges between two users"
   type: 1 # CHAT_INPUT
   options:

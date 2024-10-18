@@ -7,6 +7,7 @@ from collections import defaultdict
 import logging
 import os
 import requests
+import discord
 
 class DynamoDBHandler:
     def __init__(self, table_name):
@@ -88,40 +89,70 @@ class DynamoDBHandler:
             # If an error occurs, print it and re-raise the exception
             print(f"Error adding kill: {e.response['Error']['Message']}")
             raise
-    def remove_latest_command(self, user_id):
-        try:
-            # Query all items where this user is either the killer or the victim
-            response = self.table.query(
-                IndexName='UserIdIndex',  # You'll need to create this GSI
-                KeyConditionExpression=Key('UserId').eq(user_id)
-            )
+    def get_grudge_string(self, user_id, user_kills, compare_user, compare_kills, no_article = False):
+        #if the user_id and the compare_user_id are the same, just take the total kills instead of comparing
+        logging.info(f"get_grudge_string: {user_id} {user_kills} {compare_user} {compare_kills}")
+        if user_id == compare_user:
+            kill_count_difference = user_kills
+            self_grudge = True
+        else: 
+            kill_count_difference = user_kills - compare_kills
+            self_grudge = False
 
-            items = response['Items']
-            if not items:
-                return None
+        #message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
 
-            # Find the item with the most recent kill where this user is the killer
-            latest_item = max(items, key=lambda x: max(kill['Timestamp'] for kill in x.get('KillRecords', [])) if x.get('KillRecords') else '')
+        lead_descriptors = {
+            0: "😇 no grudge 😇",
+            1: "🌱 a budding grudge 🌱",
+            2: "🙈 a double grudge 🙈",
+            3: "😬 a triple grudge 😬",
+            4: "🔥 a QUADRUPLE grudge 🔥",
+            5: "💥 a PENTAGRUDGE 💥",
+            6: "👹 a MONSTER GRUDGE 👹",
+            7: "⚡ an OMEGA SUPER GRUDGE ⚡",
+            8: "🧬 a GENETICALLY ENGINEERED SUPER GRUDGE 🧬",
+            9: "🚨 a GRUDGE-LEVEL RED (emergency protocols activated) 🚨",
+            10: "📜 an ANCIENT GRUDGE, foretold in portents unseen, inscribed in the stars themselves 📜",
+            11: "💔 a grudge so intense and painful that it is more like love 💔",
+            12: "🧨 a CATASTROPHIC grudge 🧨",
+            13: "🌋 a grudge of apocalyptic proportions 🌋",
+            14: "🦖 a PREHISTORIC grudge that refuses to go extinct 🦖",
+            15: "🏰 GRUDGEHOLDE: an imposing stronghold built of pure grudge 🏰",
+            16: "👑 a ROYAL grudge demanding fealty from all lesser grudges 👑",
+            17: "🕵️‍♂️ a grudge currently under investigation for prohibited grudge levels 🕵️‍♂️",
+            18: "💫 a grudge whose magnitude exceeds conceptualization 💫",
+            19: "⏳ an ETERNAL GRUDGE ⏳",
+            20: "🚀 a DOUBLE-ETERNAL INTERSOLAR GIGAGRUDGE 🚀",
+            21: "🔻 a TRIPLE-ETERNAL (???) INTERSOLAR GIGAGRUDGE 🔻",
+            22: "🕳️ an ALL-CONSUMING black hole of grudge which draws other, smaller grudges to itself, incorporating them into its power for a purpose unfathomable by higher minds than the primitive organic mass of logical shambling that is the human brain 🕳️",
+            23: "🌌 a COSMIC GRUDGE spanning the entire grudgepast, grudgepresent, and grudgefuture 🌌",
+            24: "👾 a GOD-TIER allgrudge transcending grudgespace and grudgetime 👾",
+            69: "nice (grudge)",
+            420: "blazing grudge"
+        }
 
-            if not latest_item.get('KillRecords'):
-                return None
+        if not self_grudge:
+            for threshold, descriptor in sorted(lead_descriptors.items(), reverse=True):
+                if abs(kill_count_difference) >= threshold:
+                    if kill_count_difference >= 0:
+                        grudge_descriptor = descriptor
+                    elif kill_count_difference < 0:
+                        grudge_descriptor = descriptor
+                    break
+        else: 
+            for threshold, descriptor in sorted(lead_descriptors.items(), reverse=True):
+                if abs(kill_count_difference) >= threshold:
+                    if kill_count_difference >= 0:
+                        grudge_descriptor = descriptor
+                    elif kill_count_difference < 0:
+                        grudge_descriptor = descriptor
+                    break
+        #grudge_descriptor += f" ({abs(kill_count_difference)})"
+        # Optionally remove the article
+        #if no_article:
+        #    grudge_descriptor = remove_article(grudge_descriptor)
 
-            # Find and remove the most recent kill record
-            latest_kill = max(latest_item['KillRecords'], key=lambda x: x['Timestamp'])
-            latest_item['KillRecords'].remove(latest_kill)
-
-            # Update the item in the database
-            self.table.put_item(Item=latest_item)
-
-            return {
-                'KillerUserId': latest_item['UserId'],
-                'TargetUserId': latest_item['TargetUserId'],
-                'CauseOfDeath': latest_kill['CauseOfDeath'],
-                'Timestamp': latest_kill['Timestamp']
-            }
-        except ClientError as e:
-            print(f"Error removing latest command: {e.response['Error']['Message']}")
-            raise
+        return grudge_descriptor
     def get_kills(self, user_id, target_user_id):
         try:
             # Retrieve a specific item from the DynamoDB table
@@ -319,7 +350,11 @@ class DynamoDBHandler:
             kill_counts = {}
             for item in response['Items']:
                 killer = item['UserId']
-                kills = len(item.get('KillRecords', []))
+                # Filter out forgiven kills
+                unforgiven_kills = [kill for kill in item.get('KillRecords', []) 
+                                    if not kill.get('Forgiven', False)]                
+                kills = len(unforgiven_kills)                
+                #kills = len(item.get('KillRecords', []))
                 if killer in kill_counts:
                     kill_counts[killer] += kills
                 else:
@@ -699,34 +734,57 @@ class DynamoDBHandler:
         #IDEA: RESTRICT SECOND ARGUMENT TO PREMIUM 
         try:
             kill_data = self.get_kills_bidirectional(user1, user2)
-            
+            grudge_count = 0
             incidents = []
+            
             # Process kills from user1 to user2
             for kill in kill_data[0].get('KillRecords', []):
+                forgiven_value = kill.get('Forgiven', False)
                 incidents.append({
                     'UserId': user1,
                     'TargetUserId': user2,
                     'Timestamp': kill.get('Timestamp'),
                     'CauseOfDeath': kill.get('CauseOfDeath', 'Unknown'),
                     'LastWords': kill.get('LastWords', 'None'),
-                    'Forgiven': kill.get('Forgiven', False)
+                    'Forgiven': forgiven_value
                 })
             # Process kills from user2 to user1
             for kill in kill_data[1].get('KillRecords', []):
+                forgiven_value = kill.get('Forgiven', False)
                 incidents.append({
                     'UserId': user2,
                     'TargetUserId': user1,
                     'Timestamp': kill.get('Timestamp'),
                     'CauseOfDeath': kill.get('CauseOfDeath', 'Unknown'),
                     'LastWords': kill.get('LastWords', ''),
-                    'Forgiven': kill.get('Forgiven', False)
+                    'Forgiven': forgiven_value
                 })
 
-            logging.info(f"Processed incidents: {incidents}")
+            #logging.info(f"Processed incidents: {incidents}")
 
+            # Sort incidents by timestamp for grudge calc
+            incidents.sort(key=lambda x: x.get('Timestamp', ''), reverse=False)
+            left_unforgiven_count = 0
+            right_unforgiven_count = 0
+            grudge_count = 0
+            for incident in incidents:
+                forgiven_val = incident['Forgiven']
+                if not forgiven_val:
+                    killer_is_left = incident['UserId'] == user1
+                    if killer_is_left:
+                        grudge_count -= 1
+                        left_unforgiven_count += 1
+                    else:
+                        grudge_count += 1
+                        right_unforgiven_count += 1
+                incident['GrudgeCount'] = grudge_count
+                incident['LeftUnforgivenCount'] = left_unforgiven_count
+                incident['RightUnforgivenCount'] = right_unforgiven_count
+
+            
             # Sort incidents by timestamp
-            incidents.sort(key=lambda x: x.get('Timestamp', ''), reverse=True)
-
+            incidents.sort(key=lambda x: x.get('Timestamp', ''), reverse=True)            
+            
             # Apply pagination
             start_index = page * limit
             end_index = start_index + limit
@@ -739,77 +797,102 @@ class DynamoDBHandler:
                 return f"No incidents found between these two users."
             
             # Use get_named_fromid to get usernames
-            print(f" Non-paginated incidents: {incidents}")
-            print(f" Paginated incidents: {paginated_incidents}")
+            #print(f" Non-paginated incidents: {incidents}")
+            #print(f" Paginated incidents: {paginated_incidents}")
             left_user_id = incidents[0]['UserId']
             right_user_id = incidents[0]['TargetUserId']
+            # Get usernames
             left_name = self.get_name_fromid(left_user_id)
             right_name = self.get_name_fromid(right_user_id)
-            #print(f"Killer: {killer_name}, Victim: {victim_name}")
-            report = f"📜 Grudge Report: {left_name} vs {right_name} 📜\n\n"
-            if limit is not None:
-                total_incidents = len(incidents)
-                start_index = page * limit
-                end_index = min(start_index + limit, total_incidents)
-                
-                report += f"(Showing incidents {start_index + 1}-{end_index} out of {total_incidents})\n"
-                if has_more:
-                    report += f"(Page {page + 1}, more incidents available)\n"
-                else:
-                    report += f"(Page {page + 1}, last page)\n"
-            # Define column widths
-            col_widths = {
-                'date': 20,
-                'killer': 20,
-                'victim': 20,
-                'cause': 20,
-                'last_words': 30,
-                'forgiven': 10
-            }
-
-            # Create header
-            header = (
-                f"{'Date':{col_widths['date']}} | "
-                f"{'Killer':{col_widths['killer']}} | "
-                f"{'Victim':{col_widths['victim']}} | "
-                f"{'Cause of Death':{col_widths['cause']}} | "
-                f"{'Last Words':{col_widths['last_words']}} | "
-                f"{'Forgiven':{col_widths['forgiven']}}"
+            
+            grudgeholder_name = left_name if grudge_count > 0 else right_name
+            left_unforgivencount_on_right = self.get_unforgivencount_on_user(left_user_id, right_user_id)
+            right_unforgivencount_on_left = self.get_unforgivencount_on_user(right_user_id, left_user_id)
+            begrudged_name = right_name if grudgeholder_name == left_name else left_name
+            logging.info(f"grudgeholder_name: {grudgeholder_name}, begrudged_name: {begrudged_name}, left_unforgivencount_on_right: {left_unforgivencount_on_right}, right_unforgivencount_on_left: {right_unforgivencount_on_left}")
+            grudge_desc_string = self.get_grudge_string(left_user_id, left_unforgivencount_on_right, right_user_id, right_unforgivencount_on_left)
+            current_grudge_string = f"A {abs(grudge_count)} point difference in unforgiven kills gives {grudgeholder_name}\n {grudge_desc_string} against {begrudged_name}."
+            # Create the embed
+            embed = discord.Embed(
+                title=f"📜 Grudges between {left_name} and {right_name} 📜",
+                description=f"(Showing incidents {start_index + 1}-{min(end_index, len(incidents))} out of {len(incidents)})",
+                color=discord.Color.blue().value,
+                timestamp=datetime.now()
             )
-            report += header + "\n"
-            report += "-" * len(header) + "\n"
+            embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/553164743720960010/1296332288484708383/icon64.png?ex=6711e706&is=67109586&hm=90dd6486c2ba6e755b6cdca80182867367bfe95cbb627bba7b03472d3ce3a01d&")
+            embed.set_footer(
+            text=" ",
+            icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
+            )
 
-            # Add incidents
+            # Add header row
+            embed.add_field(name="Grudge Balance:", value=f"{current_grudge_string}", inline=False)
+            #embed.add_field(name="Killer → Victim", value="\u200b", inline=True)
+            #embed.add_field(name="Grudge Count", value="\u200b", inline=True)
+            previous_grudge_count = 0
+            # Add each incident as a field in the embed
             for incident in paginated_incidents:
-                timestamp = datetime.fromisoformat(incident['Timestamp'])
-                
-                killer_id = incident['UserId']
-                victim_id = incident['TargetUserId']
-                
-                if killer_id == left_user_id and victim_id == right_user_id:
-                    killer_name = left_name
-                    victim_name = right_name
-                elif killer_id == right_user_id and victim_id == left_user_id:
-                    killer_name = right_name
-                    victim_name = left_name
-                else:
-                    logging.warning(f"Unexpected id found in incident record: {incident}")
+                timestamp = datetime.fromisoformat(incident['Timestamp']).strftime('%-m/%d/%-y, %-I:%M %p')
+
+                killer_name_is_left = incident['UserId'] == user1
+
+                killer_name = left_name if killer_name_is_left else right_name
+                victim_name = right_name if killer_name_is_left else left_name
 
                 cause_of_death = incident.get('CauseOfDeath', 'Unknown')
                 last_words = incident.get('LastWords', 'None')
                 forgiven = "Yes" if incident.get('Forgiven', False) else "No"
+                grudge_count = incident.get('GrudgeCount', 'None')
+                left_unforgivens = incident.get('LeftUnforgivenCount', 'None')
+                right_unforgivens = incident.get('RightUnforgivenCount', 'None')
+                
+                kill_directional_arrow = "🔪" if killer_name_is_left else "🗡️"
+                main_message_embed_value = f"{left_name} {kill_directional_arrow} {right_name}\n"
+                embed.add_field(name=f"{timestamp}", value=main_message_embed_value, inline=True)
+                
+                # Generate the dynamic grudge change string
+                grudge_change_string = f"{grudgeholder_name} leads by {abs(grudge_count)}" if abs(grudge_count) != 0 else ""
 
-                row = (
-                    f"{timestamp.strftime('%Y-%m-%d %H:%M:%S'):{col_widths['date']}} | "
-                    f"{killer_name:{col_widths['killer']}} | "
-                    f"{victim_name:{col_widths['victim']}} | "
-                    f"{cause_of_death[:col_widths['cause']]:{col_widths['cause']}} | "
-                    f"{last_words[:col_widths['last_words']]:{col_widths['last_words']}} | "
-                    f"{forgiven:{col_widths['forgiven']}}"
+                grudgeholder_name = left_name if grudge_count > 0 else right_name
+                if forgiven == "Yes": grudge_change_string = "No change (forgiven)"
+                grudge_string = f"{grudge_change_string}" 
+                embed.add_field(name=f"Grudges: {left_unforgivens} v {right_unforgivens}", value=f"{grudge_string}", inline=True)
+                
+                cod_and_lw_combostring = ""
+                if cause_of_death and cause_of_death.lower() != "unknown":
+                    cod_and_lw_combostring += f"Killed by {cause_of_death}.\n"
+                if last_words and last_words != "None":
+                    cod_and_lw_combostring += f"\n{last_words}"
+                if cod_and_lw_combostring != "": embed.add_field(name="Notes", value=f"{cod_and_lw_combostring.strip()}", inline=True)
+                else: embed.add_field(name="\u200b", value=f"\u200b", inline=True)
+                
+                #embed.add_field(name=" ", value=f"{timestamp}", inline=False)
+                #embed.add_field(name="\u200b", value=f"{killer_name} → {victim_name}", inline=True)
+                #embed.add_field(name="\u200b", value=f"{grudge_count}", inline=True)
+                """
+                if cause_of_death is None or cause_of_death == "" or cause_of_death == "unknown" or cause_of_death == "Unknown":
+                    content_for_kill_message = f"{killer_name} killed {victim_name}."
+                else:
+                    content_for_kill_message = f"{killer_name} killed {victim_name} by {cause_of_death}."
+
+                if last_words and last_words != "None":
+                    content_for_kill_message += f' Their last words were: "{last_words}"'
+                
+                field_value = (
+                    f"{content_for_kill_message}\n"
                 )
-                report += row + "\n"
-            logging.info(f"Generated grudge report: {report} and has_more: {has_more}")
-            return f"```\n{report}\n```", has_more
+                
+                embed.add_field(
+                    name=f"{timestamp}",
+                    value=field_value,
+                    inline=False  # Ensure each incident is displayed on a new line
+                )
+                """
+
+            logging.info(f"Generated grudge report embed and has_more: {has_more}")
+            dicted_embed = embed.to_dict()
+            logging.info(f"Dicted embed: {dicted_embed}")
+            return dicted_embed, has_more
         except Exception as e:
             logging.error(f"Error in generate_grudge_report: {str(e)}", exc_info=True)
             return f"An error occurred while generating the grudge report: {str(e)}"

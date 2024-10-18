@@ -32,7 +32,6 @@ DISCORD_PUBLIC_KEY = os.environ.get("DISCORD_PUBLIC_KEY")
 
 def mention_user(user_id):
     return f"<@{user_id}>"
-
 def get_name_fromid(user_id):
     url = f"https://discord.com/api/v10/users/{user_id}"
     headers = {
@@ -47,7 +46,6 @@ def get_name_fromid(user_id):
     else:
         print(f"Failed to fetch user: {response.status_code} - {response.text}")
         return None
-
 def sanitize_input(user_input: str) -> str:
     if not isinstance(user_input, str):
         raise ValueError("Input must be a string")
@@ -72,7 +70,6 @@ def sanitize_input(user_input: str) -> str:
         sanitized_input = sanitized_input[:1000]
 
     return sanitized_input
-
 def get_user_name(raw_request, user_id):
     #print the user name 
     try:
@@ -83,82 +80,39 @@ def get_user_name(raw_request, user_id):
     
     return user_info
 
+def has_active_entitlement(guild_id, sku_id, entitlements):
+    # Check if any entitlement matches the guild and SKU ID
+    for entitlement in entitlements:
+        if entitlement.get('guild_id') == guild_id and entitlement.get('sku_id') == sku_id:
+            # Check if entitlement is active
+            if entitlement.get('ends_at') is None:  # Active entitlement
+                return True
+    return False
+
 @app.route("/", methods=["POST"])
 async def interactions():
     print(f"👉 Request: {request.json}")
     raw_request = request.json
+
+    entitlements = raw_request.get('entitlements', [])
+    guild_id = raw_request['guild_id']  # Get the guild ID from the interaction
+    sku_id = '1296369498529730622'  
+
+    # Check for active entitlement
+    if has_active_entitlement(guild_id, sku_id, entitlements):
+        logging.info("Active entitlement found. PREMIUM MODE ENABLED")
+    else:
+        logging.info("No active entitlement found.")
+    
     final_response = interact(raw_request)
     print(f"👈 Response: {final_response.json}")
     return final_response
-
 def remove_article(description):
     articles = ["a ", "an "]  # The articles to check for
     for article in articles:
         if description.startswith(article):
             return description[len(article):]  # Remove the article
     return description
-def get_grudge_string(raw_request, user_id, user_kills, compare_user, compare_kills, no_article = False):
-    #if the user_id and the compare_user_id are the same, just take the total kills instead of comparing
-    
-    if user_id == compare_user:
-        kill_count_difference = user_kills
-        self_grudge = True
-    else: 
-        kill_count_difference = user_kills - compare_kills
-        self_grudge = False
-
-    #message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
-
-    lead_descriptors = {
-        0: "😇 no grudge 😇",
-        1: "🌱 a budding grudge 🌱",
-        2: "🙈 a double grudge 🙈",
-        3: "😬 a triple grudge 😬",
-        4: "🔥 a QUADRUPLE grudge 🔥",
-        5: "💥 a PENTAGRUDGE 💥",
-        6: "👹 a MONSTER GRUDGE 👹",
-        10: "⚡ an OMEGA SUPER GRUDGE ⚡",
-        15: "⏳ an ETERNAL GRUDGE ⏳",
-        20: "🚀 a DOUBLE-ETERNAL INTERSOLAR GIGAGRUDGE 🚀",
-        25: "💫 a grudge whose magnitude exceeds conceptualization 💫",
-        30: "💔 a grudge so intense and painful that it is more like love 💔",
-        35: "🧨 a CATASTROPHIC grudge 🧨",
-        40: "🌋 a grudge of apocalyptic proportions 🌋",
-        45: "🦖 a PREHISTORIC grudge that refuses to go extinct 🦖",
-        50: "🏰 GRUDGEHOLDE: an imposing stronghold built of pure grudge 🏰",
-        60: "🌪️ a MEGA-TORNADO grudge that uproots everything 🌪️",
-        65: "🕵️‍♂️ a grudge that is currently under investigation 🕵️‍♂️",
-        70: "👑 a ROYAL grudge demanding fealty from all lesser grudges 👑",
-        75: "🚨 a GRUDGE-LEVEL RED (emergency protocols activated) 🚨",
-        80: "🧬 a GENETICALLY ENGINEERED SUPER GRUDGE 🧬",
-        85: "📜 an ANCIENT GRUDGE, foretold in portents unseen, inscribed in the stars themselves 📜",
-        90: "🕳️ an ALL-CONSUMING black hole of grudges, drawing other, smaller grudges to itself, incorporating them into its power for a purpose unfathomable by the primitive and imprecise organic shambling that is the feeble human brain 🕳️",
-        95: "🌌 a COSMIC GRUDGE spanning the entire grudgepast, grudgepresent, and grudgefuture 🌌",
-        100: "👾 a GOD-TIER allgrudge transcending grudgespace and grudgetime 👾"
-    }
-
-    if not self_grudge:
-        for threshold, descriptor in sorted(lead_descriptors.items(), reverse=True):
-            if abs(kill_count_difference) >= threshold:
-                if kill_count_difference >= 0:
-                    grudge_descriptor = descriptor
-                elif kill_count_difference < 0:
-                    grudge_descriptor = descriptor
-                break
-    else: 
-        for threshold, descriptor in sorted(lead_descriptors.items(), reverse=True):
-            if abs(kill_count_difference) >= threshold:
-                if kill_count_difference >= 0:
-                    grudge_descriptor = descriptor
-                elif kill_count_difference < 0:
-                    grudge_descriptor = descriptor
-                break
-    
-    # Optionally remove the article
-    if no_article:
-        grudge_descriptor = remove_article(grudge_descriptor)
-
-    return grudge_descriptor
 def get_grudge_description(raw_request, user_id, user_kills, compare_user, compare_kills, no_article = False, kill_adjusted_for_user=None):
     """
     Generate a description of the current grudge state, with handling for counter-norm movements
@@ -179,15 +133,15 @@ def get_grudge_description(raw_request, user_id, user_kills, compare_user, compa
     if kill_adjusted_for_user == user_id:
         previous_grudge = (user_kills - 1) - compare_kills  # Adjust for user_id's kill
         counter_norm = previous_grudge < current_grudge and current_grudge >= 1
-        logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + user: {kill_adjusted_for_user}")
+        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + user: {kill_adjusted_for_user}")
     elif kill_adjusted_for_user == compare_user:
         previous_grudge = user_kills - (compare_kills - 1)  # Adjust for compare_user's kill
         counter_norm = previous_grudge > current_grudge and current_grudge <= -1
-        logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + compare_user: {kill_adjusted_for_user}")
+        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + compare_user: {kill_adjusted_for_user}")
     else:
         previous_grudge = user_kills - compare_kills  # No kill adjustment
         counter_norm = False
-        logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + unfound kill adjusting user: {kill_adjusted_for_user}")
+        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + unfound kill adjusting user: {kill_adjusted_for_user}")
     
 
     #if the user_id and the compare_user_id are the same, just take the total kills instead of comparing
@@ -200,34 +154,14 @@ def get_grudge_description(raw_request, user_id, user_kills, compare_user, compa
 
     #message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
 
-    lead_descriptors = {
-        0: "😇 no grudge 😇",
-        1: "🌱 a budding grudge 🌱",
-        2: "🙈 a double grudge 🙈",
-        3: "😬 a triple grudge 😬",
-        4: "🔥 a QUADRUPLE grudge 🔥",
-        5: "💥 a PENTAGRUDGE 💥",
-        6: "👹 a MONSTER GRUDGE 👹",
-        10: "⚡ an OMEGA SUPER GRUDGE ⚡",
-        15: "⏳ an ETERNAL GRUDGE ⏳",
-        20: "🚀 a DOUBLE-ETERNAL INTERSOLAR GIGAGRUDGE 🚀",
-        25: "💫 a grudge whose magnitude exceeds conceptualization 💫",
-        30: "💔 a grudge so intense and painful that it is more like love 💔",
-        35: "🧨 a CATASTROPHIC grudge 🧨",
-        40: "🌋 a grudge of apocalyptic proportions 🌋",
-        45: "🦖 a PREHISTORIC grudge that refuses to go extinct 🦖",
-        50: "🏰 GRUDGEHOLDE: an imposing stronghold built of pure grudge 🏰",
-        60: "🌪️ a MEGA-TORNADO grudge that uproots everything 🌪️",
-        65: "🕵️‍♂️ a grudge that is currently under investigation 🕵️‍♂️",
-        70: "👑 a ROYAL grudge demanding fealty from all lesser grudges 👑",
-        75: "🚨 a GRUDGE-LEVEL RED (emergency protocols activated) 🚨",
-        80: "🧬 a GENETICALLY ENGINEERED SUPER GRUDGE 🧬",
-        85: "📜 an ANCIENT GRUDGE, foretold in portents unseen, inscribed in the stars themselves 📜",
-        90: "🕳️ an ALL-CONSUMING black hole of grudges, drawing other, smaller grudges to itself, incorporating them into its power for a purpose unfathomable by the primitive and imprecise organic shambling that is the feeble human brain 🕳️",
-        95: "🌌 a COSMIC GRUDGE spanning the entire grudgepast, grudgepresent, and grudgefuture 🌌",
-        100: "👾 a GOD-TIER allgrudge transcending grudgespace and grudgetime 👾"
-    }
+    if self_grudge:
+        return f"No grudge detected: both users are tied in their unforgiven kills on each other ({user_kills})."
 
+    # Find the appropriate descriptor
+    descriptor = db.get_grudge_string(user_id, user_kills, compare_user, compare_kills, no_article)
+
+    grudge_target = get_user_name(raw_request, compare_user if kill_count_difference > 0 else user_id)
+    grudge_holder = get_user_name(raw_request, user_id if kill_count_difference > 0 else compare_user)
 
     # Add some variability to the counter-norm phrases
     counter_norm_phrases = [
@@ -236,37 +170,14 @@ def get_grudge_description(raw_request, user_id, user_kills, compare_user, compa
         "That said,",
         "Nevertheless,"
     ]
-
-    if not self_grudge:
-        for threshold, descriptor in sorted(lead_descriptors.items(), reverse=True):
-            if abs(kill_count_difference) >= threshold:
-                if counter_norm:
-                    if kill_count_difference >= 0:
-                        message_content = f"{random.choice(counter_norm_phrases)} {get_user_name(raw_request, compare_user)} still has {descriptor} against {get_user_name(raw_request, user_id)} (+{abs(kill_count_difference)})."
-                    elif kill_count_difference < 0:
-                        message_content = f"{random.choice(counter_norm_phrases)} {get_user_name(raw_request, user_id)} still has {descriptor} against {get_user_name(raw_request, compare_user)} (+{abs(kill_count_difference)})."                    
-                else:                
-                    if kill_count_difference >= 0:
-                        message_content = f"{get_user_name(raw_request, compare_user)} now has {descriptor} against {get_user_name(raw_request, user_id)} (+{kill_count_difference})."
-                    elif kill_count_difference < 0:
-                        message_content = f"{get_user_name(raw_request, user_id)} now has {descriptor} against {get_user_name(raw_request, compare_user)} (+{abs(kill_count_difference)})."
-                break
-        else:
-            message_content = "Both users are tied in their kill counts. No grudge detected. "
-    else: 
-        for threshold, descriptor in sorted(lead_descriptors.items(), reverse=True):
-            if abs(kill_count_difference) >= threshold:
-                if kill_count_difference >= 0:
-                    message_content = f"{get_user_name(raw_request, compare_user)} has {descriptor} against themselves (+{kill_count_difference})."
-                elif kill_count_difference < 0:
-                    message_content = f"{get_user_name(raw_request, user_id)} has {descriptor} against themselves (+{abs(kill_count_difference)})."
-                break
-    
-    # Optionally remove the article
-    if no_article:
-        message_content = remove_article(message_content)
-
-    return message_content
+    """
+    if counter_norm:
+        counter_norm_phrase = random.choice(counter_norm_phrases)
+        return f"{counter_norm_phrase} {grudge_holder} still has {descriptor} against {grudge_target}."
+    else:
+        return f"{grudge_holder} now has {descriptor} against {grudge_target}."
+    """
+    return f"{grudge_holder} now has {descriptor} against {grudge_target}."
 def get_grudge_announcement():
     # Category 1: Grudge-related words
     category_1 = [
@@ -286,7 +197,6 @@ def get_grudge_announcement():
     
     # Construct the announcement
     return f"{word1} {word2}!"
-
 def start_message_step_function(raw_request, messages, follow_up_messages=None, remove_all_buttons=False, ephemeral=False, button_data=None):
     """
     Starts the AWS Step Function to handle message sending.
@@ -340,7 +250,6 @@ def start_message_step_function(raw_request, messages, follow_up_messages=None, 
             stateMachineArn=STEP_FUNCTION_ARN,
             input=json.dumps(followup_payload)
         )
-
 def get_random_forgiveness_message(original_grudge_description, postforgiveness_grudge_description):
     messages = [
         f"Before forgiveness, the grudge stood at: \n**{original_grudge_description}**\n\nAfter this act of mercy, it has now changed to: \n**{postforgiveness_grudge_description}**\n\nBalance is restored, at least for now.",
@@ -375,22 +284,23 @@ def handle_forgive_button(raw_request):
     #Detect if this is someone with the option to forgive themselves
     self_forgive = True if victim == user_id else False
 
-    
     # Convert the string back to a datetime object
     pretty_timestamp = datetime.fromisoformat(timestamp)
     # Format the timestamp to be more readable
     pretty_timestamp = pretty_timestamp.strftime("%B %d, %Y at %I:%M %p (UTC)")
-
+    victim_name = get_name_fromid(victim)
+    user_name = get_name_fromid(user_id)
     if _ == "forgive":
-        forgiveness_message = f"{get_name_fromid(victim)} has forgiven {mention_user(user_id)}'s kill on {pretty_timestamp}."
+        forgiveness_message = f"{victim_name} has forgiven {mention_user(user_id)}'s kill on {pretty_timestamp}."
         # Use the parsed information to mark the specific kill as forgiven in the database
-        #original_grudge_description = get_grudge_description(raw_request, user_id, db.get_unforgivencount_on_user(user_id, victim), victim, db.get_unforgivencount_on_user(victim, user_id))
         db.forgive_kill(user_id, victim, timestamp)
-        #postforgiveness_grudge_description = get_grudge_description(raw_request, user_id, db.get_unforgivencount_on_user(user_id, victim), victim, db.get_unforgivencount_on_user(victim, user_id))
+        new_grudge = db.get_grudge_string(user_id, db.get_unforgivencount_on_user(user_id, victim), victim, db.get_unforgivencount_on_user(victim, user_id), False)
+        forgiveness_message += f"\n{victim_name}'s grudge against {user_name} is now {new_grudge}"
     elif _ == "grudge":
         forgivee_name = f"{mention_user(user_id)}" if self_forgive == False else "themselves"
-        forgiveness_message = f"{get_name_fromid(victim)} has refused to forgive {forgivee_name}."
+        forgiveness_message = f"{victim_name} will never forgive {forgivee_name}."
     
+
     start_message_step_function(raw_request, [forgiveness_message], [], True)    
 def is_valid_json(data):
     try:
@@ -457,7 +367,7 @@ def handle_component_interaction(raw_request):
         response_data = {
             "type": 7,  # CHANNEL_MESSAGE_WITH_SOURCE
             "data": {
-                "content": report,
+                "embeds": [report],
                 "components": components
             }
         }
@@ -477,13 +387,12 @@ def handle_component_interaction(raw_request):
             return jsonify({
                 "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
                 "data": {
-                    "content": "Forgiveness processed. The original message has been updated.",
+                    "content": "Forgiveness processed.",
                     "flags": 64  # EPHEMERAL
                 }
             })
         else:
-            return "This grudge isn't yours to forgive."
-
+            return "This isn't your grudge."
 def interpret_boolean_input(user_input=None, default_value=False) -> bool:
     # Define broad range of inputs for yes and no
     yes_responses = {"y", "ya", "yes", "ye", "yah", "yep", "yup", "yse", "yeah", "yass", "yas", "YES"}
@@ -587,20 +496,7 @@ def interact(raw_request):
                                             "custom_id": "last_words_input",
                                             "style": 2,  # Paragraph input (multi-line)
                                             "label": "Last Words (optional)",
-                                            "placeholder": "Your final words on voice chat",
-                                            "required": False
-                                        }
-                                    ]
-                                },
-                                {
-                                    "type": 1,  # ACTION_ROW
-                                    "components": [
-                                        {
-                                            "type": 4,  # TEXT_INPUT
-                                            "custom_id": "unforgivable_input",
-                                            "style": 1,  # Short input
-                                            "label": "Typing  here will make this kill UNFORGIVABLE",
-                                            "placeholder": "No",
+                                            "placeholder": "What was said over voice chat?",
                                             "required": False
                                         }
                                     ]
@@ -640,64 +536,16 @@ def interact(raw_request):
                                             "custom_id": "last_words_input",
                                             "style": 2,  # Paragraph input (multi-line)
                                             "label": "Last Words (optional)",
-                                            "placeholder": "Your victim's last words",
+                                            "placeholder": "What was said over voice chat?",
                                             "required": False
                                         }
                                     ]
                                 },
-                                {
-                                    "type": 1,  # ACTION_ROW
-                                    "components": [
-                                        {
-                                            "type": 4,  # TEXT_INPUT
-                                            "custom_id": "unforgivable_input",
-                                            "style": 1,  # Short input
-                                            "label": "This was UNFORGIVABLE (default: no)",
-                                            "placeholder": "No",
-                                            "required": False
-                                        }
-                                    ]
-                                }
                             ]
                         }
                     }
                     return jsonify(response_data)
-                case "undoops":
-                    try:
-                        removed_command = db.remove_latest_command(user_id)
-                        if removed_command:
-                            killer_id = removed_command['KillerUserId']
-                            victim_id = removed_command['TargetUserId']
-                            cause_of_death = removed_command['CauseOfDeath']
-                            if killer_id == user_id:
-                                message_content = f"Undid your latest oops! {mention_user(killer_id)} no longer killed {mention_user(victim_id)} by {cause_of_death}."
-                            else:
-                                message_content = f"Undid your latest ettu! {mention_user(killer_id)} no longer killed you by {cause_of_death}."
-                        else:
-                            message_content = f"No recent commands found for {mention_user(user_id)} to undo."
-                    except Exception as e:
-                        message_content = f"Error undoing command: {str(e)}"
                 case "grudges":
-                    compare_user = data["options"][0]["value"]
-                    try:
-                        user_kills = db.get_kill_count(user_id)
-                        compare_kills = db.get_kill_count(compare_user)
-                        message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
-                        message_content += get_grudge_description(raw_request, user_id, user_kills, compare_user, compare_kills)
-                    except Exception as e:
-                        message_content = f"Error comparing kill counts: {str(e)}"
-                case "hallofshame":
-                    try:
-                        top_killers = db.get_top_killers(limit=5)  # Get top 5 killers
-                        if top_killers:
-                            message_content = "🏆 Hall of Shame 🏆\n"
-                            for i, (killer_id, kill_count) in enumerate(top_killers, 1):
-                                message_content += f"{i}. {get_name_fromid(killer_id)}: {kill_count} kills\n"
-                        else:
-                            message_content = "The Hall of Shame is empty. Be the first to make a mistake!"
-                    except Exception as e:
-                        message_content = f"Error retrieving Hall of Shame: {str(e)}"
-                case "grudgereport":
                     try:
                         options = data.get("options", [])
                         page = 0  # Default to first page
@@ -739,7 +587,7 @@ def interact(raw_request):
                         response_data = {
                             "type": 4,
                             "data": {
-                                "content": report,
+                                "embeds": [report],
                                 "components": components if has_more else []
                                 }
                         }
@@ -751,9 +599,19 @@ def interact(raw_request):
                         }
                     
                     return jsonify(response_data)
+                case "hallofshame":
+                    try:
+                        top_killers = db.get_top_killers(limit=5)  # Get top 5 killers
+                        if top_killers:
+                            message_content = "🏆 Hall of Shame 🏆\n Players with the most unforgiven kills.\n"
+                            for i, (killer_id, kill_count) in enumerate(top_killers, 1):
+                                message_content += f"{i}. {get_name_fromid(killer_id)}: {kill_count} kills\n"
+                        else:
+                            message_content = "The Hall of Shame is empty. Be the first to make a mistake!"
+                    except Exception as e:
+                        message_content = f"Error retrieving Hall of Shame: {str(e)}"                
                 case _:
                     message_content = "Command recognized but not implemented yet."
-            
             response_data = { 
                 "type": 4,
                 "data": {"content": message_content},
@@ -784,7 +642,7 @@ def interact(raw_request):
             return response            
         case 4:  # APPLICATION_COMMAND_AUTOCOMPLETE
             logger.info("Autocomplete received")
-        case 5:  # MODAL_SUBMIT
+        case 5:  # MODAL_SUBMIT 
             data = raw_request["data"]
             custom_id = data["custom_id"]
             parts = custom_id.split("_")
@@ -803,8 +661,8 @@ def interact(raw_request):
                     cause_of_death = sanitize_input(cause_of_death)
                     last_words = data["components"][1]["components"][0]["value"]
                     last_words = sanitize_input(last_words)
-                    unforgivable = data["components"][2]["components"][0]["value"]
-                    unforgivable = interpret_boolean_input(unforgivable)
+                    #unforgivable = data["components"][2]["components"][0]["value"]
+                    #unforgivable = interpret_boolean_input(unforgivable)
                     
                     #can't forgive your own oops 
                     forgiven = False
@@ -819,7 +677,7 @@ def interact(raw_request):
 
                     # Now you can use the victim ID along with other modal input data
                     try:
-                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, unforgivable, forgiven)
+                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven)
 
                         # Construct the message_content dynamically
                         if cause_of_death is None or cause_of_death == "":
@@ -830,17 +688,22 @@ def interact(raw_request):
                         if last_words:
                             content_for_kill_message += f' Their last words were: "{last_words}"'
 
-                        if unforgivable:
-                            content_for_kill_message += " This grudge has been marked UNFORGIVABLE!"
+                        #if unforgivable:
+                        #    content_for_kill_message += " This grudge has been marked UNFORGIVABLE!"
 
-                        if not unforgivable and forgiven:
-                            content_for_kill_message += f" {get_name_fromid(victim)} forgave them instantly."
+                        #if not unforgivable and forgiven:
+                        #    content_for_kill_message += f" {get_name_fromid(victim)} forgave them instantly."
 
                         user_kills = db.get_unforgivencount_on_user(user_id, victim)
                         compare_kills = db.get_unforgivencount_on_user(victim, user_id)
+                        user_name = get_user_name(raw_request, victim)
+                        victim_name = get_user_name(raw_request, user_id)
+                        end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"                                                
                         
-                        content_for_kill_message += f"\n{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, user_id)}"
-
+                        if user_kills > compare_kills:
+                            content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message}"
+                        else:
+                            content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message}"
                         # Create a response with a button
                         response_data = {
                             "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
@@ -852,13 +715,13 @@ def interact(raw_request):
                                         "components": [
                                             {
                                                 "type": 2,  # Button
-                                                "label": "Forgive",  # Supportive and positive action
-                                                "style": 3,  # Green button (Success)
+                                                "label": "Forgive (-1 Grudge)",  # Supportive and positive action
+                                                "style": 1,  # Green button (Success)
                                                 "custom_id": f"forgive_{user_id}_{victim}_{timestamp}"
                                             },
                                             {
                                                 "type": 2,  # Button
-                                                "label": "Do Not Forgive (+1 Grudge)",  # Not forgiving action
+                                                "label": "Do Not Forgive",  # Not forgiving action
                                                 "style": 4,  # Red button (Danger)
                                                 "custom_id": f"grudge_{user_id}_{victim}_{timestamp}"
                                             }
@@ -887,8 +750,8 @@ def interact(raw_request):
                     cause_of_death = sanitize_input(cause_of_death)
                     last_words = data["components"][1]["components"][0]["value"]
                     last_words = sanitize_input(last_words)
-                    unforgivable = data["components"][2]["components"][0]["value"]
-                    unforgivable = interpret_boolean_input(unforgivable)
+                    #unforgivable = data["components"][2]["components"][0]["value"]
+                    #unforgivable = interpret_boolean_input(unforgivable)
                     forgiven = False
                     #forgiven = interpret_boolean_input(forgiven)
                     
@@ -902,7 +765,7 @@ def interact(raw_request):
 
                     # Now you can use the victim ID along with other modal input data
                     try:
-                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, unforgivable, forgiven)
+                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven)
 
                         # Construct the message_content dynamically
                         if cause_of_death is None or cause_of_death == "":
@@ -913,16 +776,23 @@ def interact(raw_request):
                         if last_words:
                             content_for_kill_message += f' Their last words were: "{last_words}"'
 
-                        if unforgivable:
-                            content_for_kill_message += " This grudge has been marked UNFORGIVABLE!"
+                        #if unforgivable:
+                        #    content_for_kill_message += " This grudge has been marked UNFORGIVABLE!"
 
-                        if not unforgivable and forgiven:
-                            content_for_kill_message += f" {get_name_fromid(victim)} forgave them instantly."
+                        #if not unforgivable and forgiven:
+                        #    content_for_kill_message += f" {get_name_fromid(victim)} forgave them instantly."
 
                         user_kills = db.get_unforgivencount_on_user(user_id, victim)
                         compare_kills = db.get_unforgivencount_on_user(victim, user_id)
+                        user_name = get_user_name(raw_request, victim)
+                        victim_name = get_user_name(raw_request, user_id)
                         
-                        content_for_kill_message += f"\n{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"
+                        end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"
+
+                        if user_kills > compare_kills:
+                            content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message}"
+                        else:
+                            content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message}"
 
                         # Create a response with a button
                         response_data = {
@@ -935,13 +805,13 @@ def interact(raw_request):
                                         "components": [
                                             {
                                                 "type": 2,  # Button
-                                                "label": "Forgive",  # Supportive and positive action
-                                                "style": 3,  # Green button (Success)
+                                                "label": "Forgive (-1 Grudge)",  # Supportive and positive action
+                                                "style": 1,  # Green button (Success)
                                                 "custom_id": f"forgive_{user_id}_{victim}_{timestamp}"
                                             },
                                             {
                                                 "type": 2,  # Button
-                                                "label": "Do Not Forgive (+1 Grudge)",  # Not forgiving action
+                                                "label": "Do Not Forgive",  # Not forgiving action
                                                 "style": 4,  # Red button (Danger)
                                                 "custom_id": f"grudge_{user_id}_{victim}_{timestamp}"
                                             }
