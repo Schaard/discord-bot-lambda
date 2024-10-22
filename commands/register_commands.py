@@ -15,7 +15,7 @@ WITWID_SERVER = 487095283222839296
 URL_GLOBAL = f"https://discord.com/api/v9/applications/{APPLICATION_ID}/commands" #URL for global commands
 URL_GUILD = f"https://discord.com/api/v9/applications/{APPLICATION_ID}/guilds/{WITWID_SERVER}/commands" #url for WITWID guild commands
 
-guild_command_mode = True
+guild_command_mode = False
 if not guild_command_mode:
     URL = URL_GLOBAL
 else:

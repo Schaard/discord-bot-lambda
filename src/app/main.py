@@ -13,6 +13,7 @@ import requests
 import random
 import re
 import string
+import discord
 
 #set up logging
 logger = logging.getLogger()
@@ -89,340 +90,34 @@ def has_active_entitlement(guild_id, sku_id, entitlements):
                 return True
     return False
 
+#MAIN ROUTE *******************
 @app.route("/", methods=["POST"])
 async def interactions():
     print(f"👉 Request: {request.json}")
     raw_request = request.json
-
-    entitlements = raw_request.get('entitlements', [])
-    guild_id = raw_request['guild_id']  # Get the guild ID from the interaction
     sku_id = '1296369498529730622'  
+    entitlements = raw_request.get('entitlements', [])
+    guild_id = raw_request.get('guild_id', None)
+    if guild_id is None:
+        guild_id = raw_request['guild'].get['id']
+
+    if guild_id is None:
+        return jsonify({"error": "Invalid request: guild_id not provided"}), 400
 
     # Check for active entitlement
-    if has_active_entitlement(guild_id, sku_id, entitlements):
+    active_entitlement = has_active_entitlement(guild_id, sku_id, entitlements)
+    if active_entitlement:
         logging.info("Active entitlement found. PREMIUM MODE ENABLED")
     else:
         logging.info("No active entitlement found.")
     
-    final_response = interact(raw_request)
+    final_response = interact(raw_request, active_entitlement)
     print(f"👈 Response: {final_response.json}")
     return final_response
-def remove_article(description):
-    articles = ["a ", "an "]  # The articles to check for
-    for article in articles:
-        if description.startswith(article):
-            return description[len(article):]  # Remove the article
-    return description
-def get_grudge_description(raw_request, user_id, user_kills, compare_user, compare_kills, no_article = False, kill_adjusted_for_user=None):
-    """
-    Generate a description of the current grudge state, with handling for counter-norm movements
-    when a grudge decreases but remains significant.
-    
-    :param raw_request: The raw request context.
-    :param user_id: The ID of the user (killer).
-    :param user_kills: The number of kills the user has.
-    :param compare_user: The ID of the compared user (victim).
-    :param compare_kills: The number of kills the compared user has.
-    :param no_article: Flag to remove articles from the description (optional).
-    :param kill_adjusted_for_user: The ID of the user whose kill count has changed (optional).
-    """
-    
-    current_grudge = user_kills - compare_kills
 
-    # Calculate previous grudge based on who committed the kill
-    if kill_adjusted_for_user == user_id:
-        previous_grudge = (user_kills - 1) - compare_kills  # Adjust for user_id's kill
-        counter_norm = previous_grudge < current_grudge and current_grudge >= 1
-        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + user: {kill_adjusted_for_user}")
-    elif kill_adjusted_for_user == compare_user:
-        previous_grudge = user_kills - (compare_kills - 1)  # Adjust for compare_user's kill
-        counter_norm = previous_grudge > current_grudge and current_grudge <= -1
-        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + compare_user: {kill_adjusted_for_user}")
-    else:
-        previous_grudge = user_kills - compare_kills  # No kill adjustment
-        counter_norm = False
-        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + unfound kill adjusting user: {kill_adjusted_for_user}")
-    
-
-    #if the user_id and the compare_user_id are the same, just take the total kills instead of comparing
-    if user_id == compare_user:
-        kill_count_difference = user_kills
-        self_grudge = True
-    else: 
-        kill_count_difference = user_kills - compare_kills
-        self_grudge = False
-
-    #message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
-
-    if self_grudge:
-        return f"No grudge detected: both users are tied in their unforgiven kills on each other ({user_kills})."
-
-    # Find the appropriate descriptor
-    descriptor = db.get_grudge_string(user_id, user_kills, compare_user, compare_kills, no_article)
-
-    grudge_target = get_user_name(raw_request, compare_user if kill_count_difference > 0 else user_id)
-    grudge_holder = get_user_name(raw_request, user_id if kill_count_difference > 0 else compare_user)
-
-    # Add some variability to the counter-norm phrases
-    counter_norm_phrases = [
-        "Despite this,",
-        "Still,",
-        "That said,",
-        "Nevertheless,"
-    ]
-    """
-    if counter_norm:
-        counter_norm_phrase = random.choice(counter_norm_phrases)
-        return f"{counter_norm_phrase} {grudge_holder} still has {descriptor} against {grudge_target}."
-    else:
-        return f"{grudge_holder} now has {descriptor} against {grudge_target}."
-    """
-    return f"{grudge_holder} now has {descriptor} against {grudge_target}."
-def get_grudge_announcement():
-    # Category 1: Grudge-related words
-    category_1 = [
-        "BEEF", "HOSTILITIES", "GRUDGE", "FEUD", "RIVALRY", "BAD BLOOD", "TENSION", 
-        "CONFLICT", "VENDETTA", "ANIMOSITIES"
-    ]
-
-    # Category 2: Action-related words
-    category_2 = [
-        "DEEPENED", "EXACERBATED", "ESCALATED", "FUELED", 
-        "AMPLIFIED", "INTENSIFIED", "INFLAMED"
-    ]
-
-    # Randomly choose one word from each category
-    word1 = random.choice(category_1)
-    word2 = random.choice(category_2)
-    
-    # Construct the announcement
-    return f"{word1} {word2}!"
-def start_message_step_function(raw_request, messages, follow_up_messages=None, remove_all_buttons=False, ephemeral=False, button_data=None):
-    """
-    Starts the AWS Step Function to handle message sending.
-    
-    :param raw_request: Original interaction data (should contain application_id, token, id, etc.)
-    :param messages: List of initial messages to send.
-    :param follow_up_messages: List of follow-up messages to send.
-    :param remove_all_buttons: Flag indicating whether to remove buttons after the initial message.
-    :param ephemeral: Flag for ephemeral messages.
-    :param button_data: Optional button configuration data.
-    """
-    # Extract necessary details from raw_request
-    application_id = raw_request['application_id']
-    interaction_token = raw_request['token']
-    interaction_id = raw_request['id']
-    message_id = raw_request['message']['id']
-
-    # Get the Step Function ARN from environment variables
-    STEP_FUNCTION_ARN = os.environ.get("STEP_FUNCTION_ARN")
-
-    # Initialize AWS Step Functions client
-    stepfunctions_client = boto3.client('stepfunctions')
-    
-    #logging.info(f"STARTING STEP FUNCTION: {STEP_FUNCTION_ARN}")
-    
-    # Prepare the payload for the Step Function
-    step_function_payload = {
-        'application_id': application_id,
-        'interaction_token': interaction_token,
-        'id': interaction_id,
-        'message_id': message_id,
-        'remove_all_buttons': remove_all_buttons,
-        'ephemeral': ephemeral,
-        'button_data': button_data
-    }
-    
-    # Send initial messages
-    step_function_payload['messages'] = messages
-    step_function_payload['followup'] = False  # Initial messages
-    stepfunctions_client.start_execution(
-        stateMachineArn=STEP_FUNCTION_ARN,
-        input=json.dumps(step_function_payload)
-    )
-    
-    # If follow-up messages are provided, send them in a separate invocation
-    if follow_up_messages:
-        followup_payload = step_function_payload.copy()
-        followup_payload['messages'] = follow_up_messages
-        followup_payload['followup'] = True  # This is a follow-up message
-        stepfunctions_client.start_execution(
-            stateMachineArn=STEP_FUNCTION_ARN,
-            input=json.dumps(followup_payload)
-        )
-def get_random_forgiveness_message(original_grudge_description, postforgiveness_grudge_description):
-    messages = [
-        f"Before forgiveness, the grudge stood at: \n**{original_grudge_description}**\n\nAfter this act of mercy, it has now changed to: \n**{postforgiveness_grudge_description}**\n\nBalance is restored, at least for now.",
-        
-        f"Initially, the grudge was recorded as: \n**{original_grudge_description}**\n\nFollowing forgiveness, it has shifted to: \n**{postforgiveness_grudge_description}**\n\nFor now, the tension has eased.",
-        
-        f"The grudge was previously assessed at: \n**{original_grudge_description}**\n\nNow, after forgiveness, it has reduced to: \n**{postforgiveness_grudge_description}**\n\nLet’s hope this lasts.",
-        
-        f"At the outset, the grudge was measured as: \n**{original_grudge_description}**\n\nIn the wake of forgiveness, it is now: \n**{postforgiveness_grudge_description}**\n\nPerhaps harmony can be found.",
-        
-        f"Before forgiveness, the grudge level was: \n**{original_grudge_description}**\n\nAfter the act of kindness, it has now become: \n**{postforgiveness_grudge_description}**\n\nTime will tell if this change is permanent.",
-        
-        f"Originally, the grudge was recorded as: \n**{original_grudge_description}**\n\nNow, thanks to forgiveness, it has transformed to: \n**{postforgiveness_grudge_description}**\n\nWill this new state hold?",
-        
-        f"The grudge's initial status was: \n**{original_grudge_description}**\n\nFollowing forgiveness, it has shifted to: \n**{postforgiveness_grudge_description}**\n\nA new equilibrium has been reached.",
-        
-        f"Initially, the grudge was classified as: \n**{original_grudge_description}**\n\nNow, post-forgiveness, it is classified as: \n**{postforgiveness_grudge_description}**\n\nLet’s see how this plays out.",
-        
-        f"The previous grudge status was: \n**{original_grudge_description}**\n\nAfter this moment of mercy, it has changed to: \n**{postforgiveness_grudge_description}**\n\nWill this change hold?",
-        
-        f"The grudge was initially rated as: \n**{original_grudge_description}**\n\nNow, it has adjusted to: \n**{postforgiveness_grudge_description}**\n\nTime will reveal the outcome."
-    ]
-    
-    return random.choice(messages)
-def handle_forgive_button(raw_request):
-    # Extract the custom_id from the interaction
-    custom_id = raw_request['data']['custom_id']
-    
-    # Parse the custom_id to get the relevant fields
-    _, user_id, victim, timestamp = custom_id.split('_')
-    
-    #Detect if this is someone with the option to forgive themselves
-    self_forgive = True if victim == user_id else False
-
-    # Convert the string back to a datetime object
-    pretty_timestamp = datetime.fromisoformat(timestamp)
-    # Format the timestamp to be more readable
-    pretty_timestamp = pretty_timestamp.strftime("%B %d, %Y at %I:%M %p (UTC)")
-    victim_name = get_name_fromid(victim)
-    user_name = get_name_fromid(user_id)
-    if _ == "forgive":
-        forgiveness_message = f"{victim_name} has forgiven {mention_user(user_id)}'s kill on {pretty_timestamp}."
-        # Use the parsed information to mark the specific kill as forgiven in the database
-        db.forgive_kill(user_id, victim, timestamp)
-        new_grudge = db.get_grudge_string(user_id, db.get_unforgivencount_on_user(user_id, victim), victim, db.get_unforgivencount_on_user(victim, user_id), False)
-        forgiveness_message += f"\n{victim_name}'s grudge against {user_name} is now {new_grudge}"
-    elif _ == "grudge":
-        forgivee_name = f"{mention_user(user_id)}" if self_forgive == False else "themselves"
-        forgiveness_message = f"{victim_name} will never forgive {forgivee_name}."
-    
-
-    start_message_step_function(raw_request, [forgiveness_message], [], True)    
-def is_valid_json(data):
-    try:
-        json.loads(data)
-        return True
-    except json.JSONDecodeError:
-        return False
-def handle_component_interaction(raw_request):
-    data = raw_request["data"]
-    custom_id = data["custom_id"]
-    user_id = raw_request["member"]["user"]["id"]
-    
-    if custom_id.startswith("hello_button:"):
-        allowed_user_id = custom_id.split(":")[1]
-        
-        if user_id == allowed_user_id:
-            messages = ["Hello! This is a follow-up message."]
-            start_message_step_function(raw_request, messages)
-            print(f"Right user found!")
-            return {
-                "type": 4,
-                "data": {
-                    "content": "Hello button clicked!"
-                }
-            }    
-        else:
-            return jsonify({
-                "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
-                "data": {
-                    "content": "Sorry, you're not allowed to use this button.",
-                    "flags": 64  # EPHEMERAL - only visible to the user who clicked
-                }
-            })        
-    elif custom_id.startswith("grudgereport_pagination_"):
-        # Parse the custom_id to extract necessary information
-        _, __, user1, user2, page = custom_id.split("_")
-        page = int(page)
-        #logging.info(f"Pagination requested for {user1} and {user2} at page {page}")
-        report, has_more = db.generate_grudge_report(user1, user2, 8, page)
-        
-        components = []
-        if has_more:
-            components = [               
-                {
-                    "type": 1,  # ACTION_ROW
-                    "components": [
-                        {
-                            "type": 2,  # BUTTON
-                            "style": 1,  # PRIMARY
-                            "label": "Older",
-                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page+1}"
-                        },
-                        {
-                            "type": 2,  # BUTTON
-                            "style": 1,  # PRIMARY
-                            "label": "Newer",
-                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page-1}",
-                            "disabled": page == 0  # Disable if it's the first page
-                        }
-                    ]
-                }
-            ]
-
-        response_data = {
-            "type": 7,  # CHANNEL_MESSAGE_WITH_SOURCE
-            "data": {
-                "embeds": [report],
-                "components": components
-            }
-        }
-        logging.info(f"Pagination response: {response_data}")
-        return response_data    
-    elif custom_id.startswith("forgive_") or custom_id.startswith("grudge_"):
-        logger.info(f"{custom_id}")
-        custom_id_list = custom_id.split("_")
-        #killer_id = custom_id_list[1]
-        victim_id = custom_id_list[2]
-        #timestamp = custom_id_list[3]
-
-        if user_id == victim_id:
-            # Process forgiveness immediately
-            
-            handle_forgive_button(raw_request)
-            return jsonify({
-                "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
-                "data": {
-                    "content": "Forgiveness processed.",
-                    "flags": 64  # EPHEMERAL
-                }
-            })
-        else:
-            return "This isn't your grudge."
-def interpret_boolean_input(user_input=None, default_value=False) -> bool:
-    # Define broad range of inputs for yes and no
-    yes_responses = {"y", "ya", "yes", "ye", "yah", "yep", "yup", "yse", "yeah", "yass", "yas", "YES"}
-    no_responses = {"n", "no.", "no", "nah", "nope", "non", "nay", "na", "NO", "on"}  # Include 'on' for common typo
-
-    # Check if the input is None or not a string
-    if not isinstance(user_input, str):
-        return default_value
-
-    # Remove punctuation using str.translate
-    user_input_no_punctuation = user_input.translate(str.maketrans('', '', string.punctuation))
-
-    # Normalize the user input (convert to lowercase, strip spaces)
-    normalized_input = user_input_no_punctuation.strip().lower()
-
-    # Check for empty input
-    if normalized_input == "":
-        return default_value
-
-    # Check if the input is in the yes or no sets
-    if normalized_input in yes_responses:
-        return True
-    elif normalized_input in no_responses:
-        return False
-    else:
-        # Return the default value if input is unrecognized
-        return default_value
-
+#INTERACT FUNCTION
 @verify_key_decorator(DISCORD_PUBLIC_KEY)
-def interact(raw_request):
+def interact(raw_request, active_entitlement):
     if raw_request["type"] == 1:  # PING
         return jsonify({"type": 1}) # PONG
            
@@ -432,7 +127,7 @@ def interact(raw_request):
             command_name = data["name"]
             logger.info("Application command received")
             user_id = raw_request["member"]["user"]["id"]
-            
+            server_id = raw_request["guild_id"]
             match command_name:                 
                 case "report":
                     # Generate a monthly report for the server (guild)
@@ -551,17 +246,18 @@ def interact(raw_request):
                         page = 0  # Default to first page
                         logging.info(f"Number of options: {len(options)}")
                         grudge_depth = 8
+                        page = 0
                         if len(options) == 1:
                             # Report between calling user and specified user
                             target_user = options[0]["value"]
                             user1 = user_id
                             user2 = target_user
-                            report, has_more = db.generate_grudge_report(user_id, target_user, grudge_depth)
+                            report, has_more = db.generate_grudge_report(user_id, target_user, grudge_depth, page, raw_request["guild_id"], active_entitlement)
                         elif len(options) == 2:
                             # Report between two specified users
                             user1 = options[0]["value"]
                             user2 = options[1]["value"]
-                            report, has_more = db.generate_grudge_report(user1, user2, grudge_depth)
+                            report, has_more = db.generate_grudge_report(user1, user2, grudge_depth, page, raw_request["guild_id"], active_entitlement)
                         else:
                             raise ValueError("Invalid number of arguments for grudgereport")
                         #logging.info(f"Grudge report generated: {report}")
@@ -601,15 +297,36 @@ def interact(raw_request):
                     return jsonify(response_data)
                 case "hallofshame":
                     try:
-                        top_killers = db.get_top_killers(limit=5)  # Get top 5 killers
+                        this_server_id = raw_request["guild_id"]
+                        
+                        top_killers = db.get_top_killers(this_server_id, active_entitlement)  # Get top 5 killers
+                        
+                        # Create an embed
+                        embed = discord.Embed(title="🏆 Hall of Shame 🏆", 
+                                            description="Players with the most unforgiven kills.",
+                                            color=discord.Color.blue().value)  # You can choose any color you like
+                                                
                         if top_killers:
-                            message_content = "🏆 Hall of Shame 🏆\n Players with the most unforgiven kills.\n"
                             for i, (killer_id, kill_count) in enumerate(top_killers, 1):
-                                message_content += f"{i}. {get_name_fromid(killer_id)}: {kill_count} kills\n"
+                                name = get_name_fromid(killer_id)
+                                embed.add_field(name=f"{i}. {name}: ({kill_count} kills)", value="", inline=False)                            
                         else:
-                            message_content = "The Hall of Shame is empty. Be the first to make a mistake!"
+                            embed.description += "\nThe Hall of Shame is empty. Be the first to make a mistake!"
                     except Exception as e:
-                        message_content = f"Error retrieving Hall of Shame: {str(e)}"                
+                            # In case of an error, create an error embed
+                            embed = discord.Embed(title="Error", 
+                                                description=f"Error retrieving Hall of Shame: {str(e)}",
+                                                color=discord.Color.blue().value)
+                    # Convert the embed to a dict for the response
+                    embed_dict = embed.to_dict()
+
+                    response_data = {
+                        "type": 4,
+                        "data": {
+                            "embeds": [embed_dict]
+                        }
+                    }
+                    return jsonify(response_data)                 
                 case _:
                     message_content = "Command recognized but not implemented yet."
             response_data = { 
@@ -621,7 +338,7 @@ def interact(raw_request):
             logger.info("Message component received")
 
             #return strings as ethereal messages 
-            result = handle_component_interaction(raw_request)
+            result = handle_component_interaction(raw_request, active_entitlement)
             logger.info(f"Message Result: {result}")
             if isinstance(result, str):
                 logger.info("Responding with ephemeral message")
@@ -828,3 +545,377 @@ def interact(raw_request):
                         return jsonify(response_data)                    
                     except Exception as e:
                         return jsonify({"type": 4, "data": {"content": f"Error recording oops: {str(e)}"}})
+
+#forgiveness
+def get_random_forgiveness_message(postforgiveness_grudge_description):
+    messages = [
+        f"After this mercy, it has now changed to: \n**{postforgiveness_grudge_description}**",
+        
+        f"Following forgiveness, it has shifted to: \n**{postforgiveness_grudge_description}**",
+        
+        f"Now, after forgiveness, it has reduced to: \n**{postforgiveness_grudge_description}**",
+        
+        f"In the wake of forgiveness, it is now: \n**{postforgiveness_grudge_description}**",
+        
+        f"Forgiveness has transformed it into: \n**{postforgiveness_grudge_description}**",
+        
+        f"Now, post-forgiveness, it is : \n**{postforgiveness_grudge_description}**",
+        
+        f"After this moment of mercy, it has changed to: \n**{postforgiveness_grudge_description}**",
+        
+        f"Now, it has lessened to: \n**{postforgiveness_grudge_description}**"
+    ]
+    
+    return random.choice(messages)
+def handle_forgive_button(raw_request):
+    # Extract the custom_id from the interaction
+    custom_id = raw_request['data']['custom_id']
+    
+    # Parse the custom_id to get the relevant fields
+    action, user_id, victim, timestamp = custom_id.split('_')
+    
+    #Detect if this is someone with the option to forgive themselves
+    self_forgive = True if victim == user_id else False
+
+    # Convert the string back to a datetime object
+    pretty_timestamp = datetime.fromisoformat(timestamp)
+    # Format the timestamp to be more readable
+    pretty_timestamp = pretty_timestamp.strftime("%B %d, %Y at %I:%M %p (UTC)")
+    victim_name = get_name_fromid(victim)
+    user_name = get_name_fromid(user_id)
+    
+    # Create an embed
+    embed = discord.Embed(
+        title="Forgiveness Update",
+        color=discord.Color.green().value if action == "forgive" else discord.Color.red().value
+    )
+
+
+    if action == "forgive":
+        #forgiveness_message = f"{victim_name} has forgiven {mention_user(user_id)}'s friendly fire incident."
+        embed.description = f"{victim_name} has forgiven {mention_user(user_id)}'s friendly fire incident."
+        # Use the parsed information to mark the specific kill as forgiven in the database
+        db.forgive_kill(user_id, victim, timestamp)
+       
+        user_unforgiven_count = db.get_unforgivencount_on_user(user_id, victim)
+        victim_unforgiven_count = db.get_unforgivencount_on_user(victim, user_id)
+        
+        grudgeholder_id = user_id if user_unforgiven_count < victim_unforgiven_count else victim
+        grudgeholder_name = user_name if grudgeholder_id == user_id else victim_name
+        new_grudge = db.get_grudge_string(user_id, db.get_unforgivencount_on_user(user_id, victim), victim, db.get_unforgivencount_on_user(victim, user_id), False)
+        grudge_adjustment_string = get_random_forgiveness_message(new_grudge)
+        
+        embed.add_field(name="Grudge Update", value=grudge_adjustment_string, inline=False)
+        #forgiveness_message += f"\n{grudge_adjustment_string}"
+    elif action == "grudge":
+        forgivee_name = f"{mention_user(user_id)}" if self_forgive == False else "themselves"
+        embed.description = f"{victim_name} will never forgive {forgivee_name}."
+
+    # Convert the embed to a dict
+    embed_dict = embed.to_dict()
+
+    logging.info(f"Sending forgiveness embed: {embed_dict}")
+
+    # Start the step function to send the embed
+    start_message_step_function(raw_request, None, embed_dict, None, True)
+
+    #logging.info(f"Sending forgiveness_message: {forgiveness_message}")
+    #start_message_step_function(raw_request, [forgiveness_message], [], True)    
+def remove_article(description):
+    articles = ["a ", "an "]  # The articles to check for
+    for article in articles:
+        if description.startswith(article):
+            return description[len(article):]  # Remove the article
+    return description
+def get_grudge_description(raw_request, user_id, user_kills, compare_user, compare_kills, no_article = False, kill_adjusted_for_user=None):
+    """
+    Generate a description of the current grudge state, with handling for counter-norm movements
+    when a grudge decreases but remains significant.
+    
+    :param raw_request: The raw request context.
+    :param user_id: The ID of the user (killer).
+    :param user_kills: The number of kills the user has.
+    :param compare_user: The ID of the compared user (victim).
+    :param compare_kills: The number of kills the compared user has.
+    :param no_article: Flag to remove articles from the description (optional).
+    :param kill_adjusted_for_user: The ID of the user whose kill count has changed (optional).
+    """
+    
+    current_grudge = user_kills - compare_kills
+
+    # Calculate previous grudge based on who committed the kill
+    if kill_adjusted_for_user == user_id:
+        previous_grudge = (user_kills - 1) - compare_kills  # Adjust for user_id's kill
+        counter_norm = previous_grudge < current_grudge and current_grudge >= 1
+        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + user: {kill_adjusted_for_user}")
+    elif kill_adjusted_for_user == compare_user:
+        previous_grudge = user_kills - (compare_kills - 1)  # Adjust for compare_user's kill
+        counter_norm = previous_grudge > current_grudge and current_grudge <= -1
+        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + compare_user: {kill_adjusted_for_user}")
+    else:
+        previous_grudge = user_kills - compare_kills  # No kill adjustment
+        counter_norm = False
+        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + unfound kill adjusting user: {kill_adjusted_for_user}")
+    
+
+    #if the user_id and the compare_user_id are the same, just take the total kills instead of comparing
+    if user_id == compare_user:
+        kill_count_difference = user_kills
+        self_grudge = True
+    else: 
+        kill_count_difference = user_kills - compare_kills
+        self_grudge = False
+
+    #message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
+
+    if self_grudge:
+        return f"No grudge detected: both users are tied in their unforgiven kills on each other ({user_kills})."
+
+    # Find the appropriate descriptor
+    descriptor = db.get_grudge_string(user_id, user_kills, compare_user, compare_kills, no_article)
+
+    grudge_target = get_user_name(raw_request, compare_user if kill_count_difference > 0 else user_id)
+    grudge_holder = get_user_name(raw_request, user_id if kill_count_difference > 0 else compare_user)
+
+    # Add some variability to the counter-norm phrases
+    counter_norm_phrases = [
+        "Despite this,",
+        "Still,",
+        "That said,",
+        "Nevertheless,"
+    ]
+    """
+    if counter_norm:
+        counter_norm_phrase = random.choice(counter_norm_phrases)
+        return f"{counter_norm_phrase} {grudge_holder} still has {descriptor} against {grudge_target}."
+    else:
+        return f"{grudge_holder} now has {descriptor} against {grudge_target}."
+    """
+    return f"{grudge_holder} now has {descriptor} against {grudge_target}."
+def get_grudge_announcement():
+    # Category 1: Grudge-related words
+    category_1 = [
+        "BEEF", "HOSTILITIES", "GRUDGE", "FEUD", "RIVALRY", "BAD BLOOD", "TENSION", 
+        "CONFLICT", "VENDETTA", "ANIMOSITIES"
+    ]
+
+    # Category 2: Action-related words
+    category_2 = [
+        "DEEPENED", "EXACERBATED", "ESCALATED", "FUELED", 
+        "AMPLIFIED", "INTENSIFIED", "INFLAMED"
+    ]
+
+    # Randomly choose one word from each category
+    word1 = random.choice(category_1)
+    word2 = random.choice(category_2)
+    
+    # Construct the announcement
+    return f"{word1} {word2}!"
+def start_message_step_function(raw_request, messages = None, embed = None, follow_up_messages=None, remove_all_buttons=False, ephemeral=False, button_data=None):
+    """
+    Starts the AWS Step Function to handle message sending.
+    
+    :param raw_request: Original interaction data (should contain application_id, token, id, etc.)
+    :param messages: List of initial messages to send.
+    :param follow_up_messages: List of follow-up messages to send.
+    :param remove_all_buttons: Flag indicating whether to remove buttons after the initial message.
+    :param ephemeral: Flag for ephemeral messages.
+    :param button_data: Optional button configuration data.
+    """
+    # Extract necessary details from raw_request
+    application_id = raw_request['application_id']
+    interaction_token = raw_request['token']
+    interaction_id = raw_request['id']
+    message_id = raw_request['message']['id']
+
+    # Get the Step Function ARN from environment variables
+    STEP_FUNCTION_ARN = os.environ.get("STEP_FUNCTION_ARN")
+
+    # Initialize AWS Step Functions client
+    stepfunctions_client = boto3.client('stepfunctions')
+    
+    #logging.info(f"STARTING STEP FUNCTION: {STEP_FUNCTION_ARN}")
+    
+    # Prepare the payload for the Step Function
+    step_function_payload = {
+        'application_id': application_id,
+        'interaction_token': interaction_token,
+        'id': interaction_id,
+        'message_id': message_id,
+        'remove_all_buttons': remove_all_buttons,
+        'ephemeral': ephemeral,
+        'button_data': button_data,
+        'embeds': embed
+    }
+    
+    # Send initial messages
+    step_function_payload['messages'] = messages
+    step_function_payload['followup'] = False  # Initial messages
+    stepfunctions_client.start_execution(
+        stateMachineArn=STEP_FUNCTION_ARN,
+        input=json.dumps(step_function_payload)
+    )
+    
+    # If follow-up messages are provided, send them in a separate invocation
+    if follow_up_messages:
+        followup_payload = step_function_payload.copy()
+        followup_payload['messages'] = follow_up_messages
+        followup_payload['followup'] = True  # This is a follow-up message
+        stepfunctions_client.start_execution(
+            stateMachineArn=STEP_FUNCTION_ARN,
+            input=json.dumps(followup_payload)
+        )
+def is_valid_json(data):
+    try:
+        json.loads(data)
+        return True
+    except json.JSONDecodeError:
+        return False
+def handle_component_interaction(raw_request, active_entitlement):
+    data = raw_request["data"]
+    custom_id = data["custom_id"]
+    user_id = raw_request["member"]["user"]["id"]
+    
+    if custom_id.startswith("hello_button:"):
+        allowed_user_id = custom_id.split(":")[1]
+        
+        if user_id == allowed_user_id:
+            messages = ["Hello! This is a follow-up message."]
+            start_message_step_function(raw_request, messages)
+            print(f"Right user found!")
+            return {
+                "type": 4,
+                "data": {
+                    "content": "Hello button clicked!"
+                }
+            }    
+        else:
+            return jsonify({
+                "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+                "data": {
+                    "content": "Sorry, you're not allowed to use this button.",
+                    "flags": 64  # EPHEMERAL - only visible to the user who clicked
+                }
+            })        
+    elif custom_id.startswith("grudgereport_pagination_"):
+        if not active_entitlement:
+            components = [               
+                {
+                    "type": 1,  # ACTION_ROW
+                    "components": [
+                        {
+                            "type": 2,  # BUTTON
+                            "style": 1,  # PRIMARY
+                            "label": "Older",
+                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page}"
+                        },
+                        {
+                            "type": 2,  # BUTTON
+                            "style": 1,  # PRIMARY
+                            "label": "Newer",
+                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page}",
+                            "disabled": page == 0  # Disable if it's the first page
+                        },
+                        {
+                            "type": 2,  # BUTTON
+                            "style": 6,  # PRIMARY
+                            "label": "GrudgeKeeper Premium - $1.99"
+                        }
+                    ]
+                }
+            ]
+            response_data = {
+                "type": 7,
+                "embeds": raw_request['embeds'],  
+                "data": {
+                    "components": components
+                }
+            }
+            logging.info(f"Pagination response: {response_data}")
+            return response_data
+        
+        # Parse the custom_id to extract necessary information
+        _, __, user1, user2, page = custom_id.split("_")
+        page = int(page)
+        #logging.info(f"Pagination requested for {user1} and {user2} at page {page}")
+        report, has_more = db.generate_grudge_report(user1, user2, 8, page, raw_request["guild_id"], active_entitlement)
+        
+        components = []
+        if has_more:
+            components = [               
+                {
+                    "type": 1,  # ACTION_ROW
+                    "components": [
+                        {
+                            "type": 2,  # BUTTON
+                            "style": 1,  # PRIMARY
+                            "label": "Older",
+                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page+1}"
+                        },
+                        {
+                            "type": 2,  # BUTTON
+                            "style": 1,  # PRIMARY
+                            "label": "Newer",
+                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page-1}",
+                            "disabled": page == 0  # Disable if it's the first page
+                        }
+                    ]
+                }
+            ]
+
+        response_data = {
+            "type": 7,  # CHANNEL_MESSAGE_WITH_SOURCE
+            "data": {
+                "embeds": [report],
+                "components": components
+            }
+        }
+        logging.info(f"Pagination response: {response_data}")
+        return response_data    
+    elif custom_id.startswith("forgive_") or custom_id.startswith("grudge_"):
+        logger.info(f"{custom_id}")
+        custom_id_list = custom_id.split("_")
+        #killer_id = custom_id_list[1]
+        victim_id = custom_id_list[2]
+        #timestamp = custom_id_list[3]
+
+        if user_id == victim_id:
+            # Process forgiveness immediately
+            
+            handle_forgive_button(raw_request)
+            return jsonify({
+                "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+                "data": {
+                    "content": "Forgiveness processed.",
+                    "flags": 64  # EPHEMERAL
+                }
+            })
+        else:
+            return "This isn't your grudge."
+def interpret_boolean_input(user_input=None, default_value=False) -> bool:
+    # Define broad range of inputs for yes and no
+    yes_responses = {"y", "ya", "yes", "ye", "yah", "yep", "yup", "yse", "yeah", "yass", "yas", "YES"}
+    no_responses = {"n", "no.", "no", "nah", "nope", "non", "nay", "na", "NO", "on"}  # Include 'on' for common typo
+
+    # Check if the input is None or not a string
+    if not isinstance(user_input, str):
+        return default_value
+
+    # Remove punctuation using str.translate
+    user_input_no_punctuation = user_input.translate(str.maketrans('', '', string.punctuation))
+
+    # Normalize the user input (convert to lowercase, strip spaces)
+    normalized_input = user_input_no_punctuation.strip().lower()
+
+    # Check for empty input
+    if normalized_input == "":
+        return default_value
+
+    # Check if the input is in the yes or no sets
+    if normalized_input in yes_responses:
+        return True
+    elif normalized_input in no_responses:
+        return False
+    else:
+        # Return the default value if input is unrecognized
+        return default_value
