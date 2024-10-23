@@ -247,6 +247,8 @@ def interact(raw_request, active_entitlement):
                         logging.info(f"Number of options: {len(options)}")
                         grudge_depth = 8
                         page = 0
+                        
+                        
                         if len(options) == 1:
                             # Report between calling user and specified user
                             target_user = options[0]["value"]
@@ -261,7 +263,8 @@ def interact(raw_request, active_entitlement):
                         else:
                             raise ValueError("Invalid number of arguments for grudgereport")
                         #logging.info(f"Grudge report generated: {report}")
-                        
+                        logging.info(f"Result from generate_grudge_report: {report}")
+        
                         #Make the button if there's more!
                         components = []
                         if has_more:
@@ -303,7 +306,7 @@ def interact(raw_request, active_entitlement):
                         
                         # Create an embed
                         embed = discord.Embed(title="🏆 Hall of Shame 🏆", 
-                                            description="Players with the most unforgiven kills.",
+                                            description="Players with the most unforgiven kills",
                                             color=discord.Color.blue().value)  # You can choose any color you like
                                                 
                         if top_killers:
@@ -586,14 +589,17 @@ def handle_forgive_button(raw_request):
     
     # Create an embed
     embed = discord.Embed(
-        title="Forgiveness Update",
+        title="Grudge Update",
         color=discord.Color.green().value if action == "forgive" else discord.Color.red().value
     )
-
+    embed.set_author(
+    name="GrudgeKeeper",
+    icon_url="https://disnake.dev/assets/disnake-logo.png",
+    )
 
     if action == "forgive":
         #forgiveness_message = f"{victim_name} has forgiven {mention_user(user_id)}'s friendly fire incident."
-        embed.description = f"{victim_name} has forgiven {mention_user(user_id)}'s friendly fire incident."
+        embed.description = f"{victim_name} has forgiven their grudge against {mention_user(user_id)}."
         # Use the parsed information to mark the specific kill as forgiven in the database
         db.forgive_kill(user_id, victim, timestamp)
        
@@ -609,7 +615,7 @@ def handle_forgive_button(raw_request):
         #forgiveness_message += f"\n{grudge_adjustment_string}"
     elif action == "grudge":
         forgivee_name = f"{mention_user(user_id)}" if self_forgive == False else "themselves"
-        embed.description = f"{victim_name} will never forgive {forgivee_name}."
+        embed.description = f"{victim_name} will never forgive {forgivee_name} for this."
 
     # Convert the embed to a dict
     embed_dict = embed.to_dict()
