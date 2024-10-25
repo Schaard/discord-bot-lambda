@@ -157,13 +157,13 @@ def interact(raw_request, active_entitlement):
                     last_day_of_month = get_last_day_of_month(today)
 
                     # Generate the report using your DynamoDB handler
-                    monthly_report = db.get_wrapped_report(server_id, first_day_of_month, last_day_of_month)
-
+                    monthly_report = db.get_wrapped_report(server_id, first_day_of_month, last_day_of_month, active_entitlement)
+                    embed_dict = monthly_report.to_dict()
                     # Return the report as a message to the channel
                     response_data = {
                         "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
                         "data": {
-                            "content": monthly_report
+                            "embeds": [embed_dict]
                         }
                     }
                     return jsonify(response_data)                
@@ -414,11 +414,13 @@ def interact(raw_request, active_entitlement):
                     try:
                         db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven)
 
+                        grudge_announcement_message = get_grudge_announcement()
+
                         # Construct the message_content dynamically
                         if cause_of_death is None or cause_of_death == "":
-                            content_for_kill_message = f"{get_grudge_announcement()} {mention_user(user_id)} killed {mention_user(victim)}!"
+                            content_for_kill_message = f"{mention_user(user_id)} killed {mention_user(victim)}!"
                         else:
-                            content_for_kill_message = f"{get_grudge_announcement()} {mention_user(user_id)} killed {mention_user(victim)} by {cause_of_death}!"
+                            content_for_kill_message = f"{mention_user(user_id)} killed {mention_user(victim)} by {cause_of_death}!"
 
                         if last_words:
                             content_for_kill_message += f' Their last words were: "{last_words}"'
@@ -436,14 +438,14 @@ def interact(raw_request, active_entitlement):
                         end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"                                                
                         
                         if user_kills > compare_kills:
-                            content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message}"
+                            content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
                         else:
-                            content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message}"
+                            content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
                         
                         
                         # Create an embed
                         embed = discord.Embed(
-                            title="Oops!",
+                            title=f"{grudge_announcement_message}",
                             description=content_for_kill_message,
                             color=discord.Color.blue().value ,
                             timestamp=datetime.now()
@@ -499,7 +501,7 @@ def interact(raw_request, active_entitlement):
                     custom_id = data["custom_id"]
                     victim = parts[2] # Extract the victim ID from the custom_id
                     user_id = parts[3]  # Extract the user ID from the custom_id
-
+                    
                     # Process other modal inputs
                     cause_of_death = data["components"][0]["components"][0]["value"]
                     cause_of_death = sanitize_input(cause_of_death)
@@ -521,12 +523,12 @@ def interact(raw_request, active_entitlement):
                     # Now you can use the victim ID along with other modal input data
                     try:
                         db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven)
-
+                        grudge_announcement_message = get_grudge_announcement()
                         # Construct the message_content dynamically
                         if cause_of_death is None or cause_of_death == "":
-                            content_for_kill_message = f"{get_grudge_announcement()} {mention_user(user_id)} killed {mention_user(victim)}!"
+                            content_for_kill_message = f"{mention_user(user_id)} killed {mention_user(victim)}!"
                         else:
-                            content_for_kill_message = f"{get_grudge_announcement()} {mention_user(user_id)} killed {mention_user(victim)} by {cause_of_death}!"
+                            content_for_kill_message = f"{mention_user(user_id)} killed {mention_user(victim)} by {cause_of_death}!"
 
                         if last_words:
                             content_for_kill_message += f' Their last words were: "{last_words}"'
@@ -545,15 +547,34 @@ def interact(raw_request, active_entitlement):
                         end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"
 
                         if user_kills > compare_kills:
-                            content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message}"
+                            content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
                         else:
-                            content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message}"
+                            content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
+                        
+                        # Create an embed
+                        embed = discord.Embed(
+                            title=f"{grudge_announcement_message}",
+                            description=content_for_kill_message,
+                            color=discord.Color.blue().value ,
+                            timestamp=datetime.now()
+                        )
+                        embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/553164743720960010/1296332288484708383/icon64.png?ex=6711e706&is=67109586&hm=90dd6486c2ba6e755b6cdca80182867367bfe95cbb627bba7b03472d3ce3a01d&")
+                        footer_text = "Generated by GrudgeKeeper Free" if not active_entitlement else "Generated by GrudgeKeeper Premium"
+                        embed.set_footer(
+                        text=f"{footer_text}",
+                        icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
+                        )
+                        
+                        # Convert the embed to a dict
+                        embed_dict = embed.to_dict()
+
+                        logging.info(f"Sending forgiveness embed: {embed_dict}")
 
                         # Create a response with a button
                         response_data = {
                             "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
                             "data": {
-                                "content": content_for_kill_message,
+                                "embeds": [embed_dict],
                                 "components": [
                                     {
                                         "type": 1,  # ACTION_ROW

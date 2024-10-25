@@ -93,7 +93,7 @@ class DynamoDBHandler:
             raise  
 
     #Get Kill Data
-    def get_kills(self, user_id, target_user_id, server_id = None, entitlement_active = False):
+    def get_kills(self, user_id, target_user_id, server_id = None, active_entitlement = False):
         try:
             # Retrieve a specific item from the DynamoDB table
             response = self.table.get_item(
@@ -114,7 +114,7 @@ class DynamoDBHandler:
                 server_filtered_records = kill_records  # No server filtering if server_id is None
 
             # If entitlement is active, return all server-filtered records
-            if entitlement_active:
+            if active_entitlement:
                 return server_filtered_records
 
             # If entitlement is not active, filter for current month
@@ -132,10 +132,10 @@ class DynamoDBHandler:
             # If an error occurs, print it and re-raise the exception
             print(f"Error retrieving kills: {e.response['Error']['Message']}")
             raise              
-    def get_unforgivens_on_user(self, user_id, victim, server_id = None, entitlement_active = False):
+    def get_unforgivens_on_user(self, user_id, victim, server_id = None, active_entitlement = False):
         try:
             # Retrieve the kills for the given user and victim
-            kill_records = self.get_kills(user_id, victim, server_id, entitlement_active)
+            kill_records = self.get_kills(user_id, victim, server_id, active_entitlement)
             #print(f"Total kills for {user_id} on {victim}: {kill_records}")
             # Filter out the unforgiven kills
             unforgiven_kills = [kill for kill in kill_records if not kill['Forgiven']]
@@ -144,10 +144,10 @@ class DynamoDBHandler:
         except ClientError as e:
             print(f"Error retrieving unforgiven kills: {e.response['Error']['Message']}")
             raise
-    def get_unforgivencount_on_user(self, user_id, victim, server_id = None, entitlement_active = False):
+    def get_unforgivencount_on_user(self, user_id, victim, server_id = None, active_entitlement = False):
         try:
             # Retrieve the kills for the given user and victim
-            unforgiven_kill_number = len(self.get_unforgivens_on_user(user_id, victim, server_id, entitlement_active))
+            unforgiven_kill_number = len(self.get_unforgivens_on_user(user_id, victim, server_id, active_entitlement))
             return unforgiven_kill_number
         except ClientError as e:
             print(f"Error counting unforgiven kills: {e.response['Error']['Message']}")
@@ -234,9 +234,9 @@ class DynamoDBHandler:
             return "Unknown User"  
 
     #Reports
-    def get_top_killers(self, server_id, entitlement_active):
+    def get_top_killers(self, server_id, active_entitlement):
         try:
-            limit = 11 if entitlement_active else 4
+            limit = 11 if active_entitlement else 4
             
             response = self.table.query(
                 IndexName='ServerId-index',  # Using the existing GSI
@@ -254,7 +254,7 @@ class DynamoDBHandler:
                 unforgiven_kills = []                
                 for kill in item.get('KillRecords', []): 
                     if not kill.get('Forgiven', False):
-                        if entitlement_active:
+                        if active_entitlement:
                             unforgiven_kills.append(kill)
                         else:
                             # Parse the timestamp and check if it's in the current month
@@ -276,7 +276,7 @@ class DynamoDBHandler:
         except ClientError as e:
             print(f"Error getting top killers: {e.response['Error']['Message']}")
             raise   
-    def get_wrapped_report(self, server_id, start_date, end_date):
+    def get_wrapped_report(self, server_id, start_date, end_date, active_entitlement = False):
         """
         Generate a Spotify Wrapped-style report for a server, summarizing monthly friendly-fire stats.
         
@@ -332,7 +332,7 @@ class DynamoDBHandler:
             kill_stats = self._process_kill_records(processed_items, server_id, start_date, end_date)
 
             # Build and return the Wrapped-style summary message
-            report = self._build_report(kill_stats, processed_items, start_date, end_date)
+            report = self._build_report(kill_stats, processed_items, start_date, end_date, active_entitlement)
             return report
         
         except Exception as e:
@@ -425,58 +425,74 @@ class DynamoDBHandler:
         except ClientError as e:
             print(f"Error retrieving kills: {e.response['Error']['Message']}")
             raise
-    def _build_report(self, kill_stats, processed_items, start_date, end_date):
+    def _build_report(self, kill_stats, processed_items, start_date, end_date, active_entitlement = False):
         """ Helper method to build the report string from the data """
         month_year = start_date.strftime("%B %Y")
-        report = f"**🌟 Friendly-Fire Wrapped: Your Server's Month in Grudges ({month_year}) 🌟**\n"
-
+        
+        # Create the embed
+        embed = discord.Embed(
+            title=f"🌟 Friendly-Fire Wrapped: Your Server's Month in Grudges ({month_year}) 🌟",
+            color=discord.Color.blue().value,
+            timestamp=datetime.now() 
+        )
+        
         # Calculate total kills
         total_kills = sum(kill_stats['kills_by_user'].values())
-        report += f"🎯 In Case You Missed It: Your Server's Stats Are In! 🎯 "
-        report += f"\n Collectively, you recorded a whopping **{total_kills} friendly-fire incidents** this month.\n"
+        embed.description = (f"Collectively, you recorded a whopping **{total_kills} friendly-fire incidents** this month.")
 
-        # Add first and last incident information
+        # Add first incident information
         if kill_stats['first_incident']:
             first = kill_stats['first_incident']
-            report += f"\n🔥 **(Friendly) Firestarter Award: First Kill of the Month** 🔥 "
-            report += f"On {first['timestamp'].strftime('%B %d')} at {first['timestamp'].strftime('%I:%M %p')}, "
-            report += f"<@{first['killer']}> kicked off the month by taking out <@{first['victim']}>!"
-            
+            first_incident = (f"On {first['timestamp'].strftime('%B %d')} at {first['timestamp'].strftime('%I:%M %p')}, "
+                            f"<@{first['killer']}> kicked off the month by taking out <@{first['victim']}>!")
             if first.get('cause_of_death'):
-                report += f" The cause? {first['cause_of_death']}."
-            
+                first_incident += f" The cause? {first['cause_of_death']}."
             if first.get('last_words'):
-                report += f" This first last words were: \"{first['last_words']}\""
+                first_incident += f" The first last words were: \"{first['last_words']}\""
+            embed.add_field(name="🔥 (Friendly) Firestarter Award: First Kill of the Month 🔥", value=first_incident, inline=False)
 
         # Add channel insights
         if kill_stats['kills_by_channel']:
             top_channel = max(kill_stats['kills_by_channel'], key=kill_stats['kills_by_channel'].get)
             top_channel_kills = kill_stats['kills_by_channel'][top_channel]
-            report += f"\n\n💥 **The 'Danger Zone' Award** 💥 The channel <#{top_channel}> is our server's friendly-fire hotspot with {top_channel_kills} incidents!\n"
+            embed.add_field(name="💥 The 'Danger Zone' Award 💥", 
+                            value=f"The channel <#{top_channel}> is our server's friendly-fire hotspot with {top_channel_kills} incidents!", 
+                            inline=False)
         else:
-            report += "\n🏞️ All channels seem equally peaceful (or chaotic). No danger zones detected! 🏞️\n"
+            embed.add_field(name="🏞️ Peaceful Channels 🏞️", 
+                            value="All channels seem equally peaceful (or chaotic). No danger zones detected!", 
+                            inline=False)
 
         if total_kills == 0:
-            report += f"☮️ No one's been racking up kills...yet! ☮️\n"
+            embed.add_field(name="☮️ Peace Reigns ☮️", value="No one's been racking up kills...yet!", inline=False)
         else:
             # Top Killer
             top_killer = max(kill_stats['kills_by_user'], key=kill_stats['kills_by_user'].get)
-            report += f"🏆 **The 'Oops, My Bad' Award** 🏆 goes to <@{top_killer}> with {kill_stats['kills_by_user'][top_killer]} friendly-fire incidents!\n"
+            embed.add_field(name="🏆 The 'Oops, My Bad' Award 🏆", 
+                            value=f"Goes to <@{top_killer}> with {kill_stats['kills_by_user'][top_killer]} friendly-fire incidents!", 
+                            inline=False)
 
             # Most Forgiving
             most_forgiving = max(kill_stats['forgiveness_count'], key=kill_stats['forgiveness_count'].get, default=None)
             if most_forgiving:
-                report += f"😇 **The 'Turn the Other Cheek' Award** 😇 is earned by <@{most_forgiving}> for forgiving {kill_stats['forgiveness_count'][most_forgiving]} times!\n"
+                embed.add_field(name="😇 The 'Turn the Other Cheek' Award 😇", 
+                                value=f"Earned by <@{most_forgiving}> for forgiving {kill_stats['forgiveness_count'][most_forgiving]} times!", 
+                                inline=False)
 
-            # Most Forgiven (new code)
+            # Most Forgiven
             most_forgiven = max(kill_stats['forgiveness_received'], key=kill_stats['forgiveness_received'].get, default=None)
             if most_forgiven:
-                report += f"🧲 **The 'Forgiveness Magnet' Award** 🧲 goes to <@{most_forgiven}> for being forgiven {kill_stats['forgiveness_received'][most_forgiven]} times!\n"
+                embed.add_field(name="🧲 The 'Forgiveness Magnet' Award 🧲", 
+                                value=f"Goes to <@{most_forgiven}> for being forgiven {kill_stats['forgiveness_received'][most_forgiven]} times!", 
+                                inline=False)
             else:
-                report += "���️ No one's been forgiven...yet! ���️\n"
+                embed.add_field(name="🕊️ Unforgiving Server", value="No one's been forgiven...yet!", inline=False)
+
             # Biggest Victim
             biggest_victim = max(kill_stats['kills_by_victim'], key=kill_stats['kills_by_victim'].get)
-            report += f"☠️ **The 'Human Shield' Award** ☠️ is reluctantly accepted by <@{biggest_victim}>, killed {kill_stats['kills_by_victim'][biggest_victim]} times!\n"
+            embed.add_field(name="☠️ The 'Human Shield' Award ☠️", 
+                            value=f"Reluctantly accepted by <@{biggest_victim}>, killed {kill_stats['kills_by_victim'][biggest_victim]} times!", 
+                            inline=False)
 
             # Biggest Grudge
             biggest_grudge = max(
@@ -487,30 +503,35 @@ class DynamoDBHandler:
                 default=(None, None, 0)
             )
             if biggest_grudge[0]:
-                report += f"🧊 **The 'Ice in Their Veins' Award** 🧊 goes to <@{biggest_grudge[1]}> for not forgiving <@{biggest_grudge[0]}> {biggest_grudge[2]} times!\n"
+                embed.add_field(name="🧊 The 'Ice in Their Veins' Award 🧊", 
+                                value=f"Goes to <@{biggest_grudge[1]}> for not forgiving <@{biggest_grudge[0]}> {biggest_grudge[2]} times!", 
+                                inline=False)
 
             # Multi-kill insights
             multi_kill_insights = self.generate_multi_kill_insights(processed_items)
             if multi_kill_insights:
-                report += "🤯 **The Team Multi-Kill Award** 🤯 "
-                for insight in multi_kill_insights:
-                    report += insight + "\n"
+                embed.add_field(name="🤯 The Team Multi-Kill Award 🤯", 
+                                value="\n".join(multi_kill_insights), 
+                                inline=False)
 
+            # Last incident
             if kill_stats['last_incident']:
                 last = kill_stats['last_incident']
-                report += f"\n🏁 **The Month's Final Betrayal** 🏁 "
-                report += f"The final friendly-fire of {month_year} occurred on {last['timestamp'].strftime('%B %d')} at {last['timestamp'].strftime('%I:%M %p')}, "
-                report += f"when <@{last['killer']}> caught <@{last['victim']}> off-guard."
-                
+                last_incident = (f"The final friendly-fire of {month_year} occurred on {last['timestamp'].strftime('%B %d')} "
+                                f"at {last['timestamp'].strftime('%I:%M %p')}, when <@{last['killer']}> caught <@{last['victim']}> off-guard.")
                 if last.get('cause_of_death'):
-                    report += f" The finishing blow? {last['cause_of_death']}."
-                
+                    last_incident += f" The finishing blow? {last['cause_of_death']}."
                 if last.get('last_words'):
-                    report += f" We'll always remember their final words: \"{last['last_words']}\""
-                
-            report += "\n"
-
-        return report
+                    last_incident += f" We'll always remember their final words: \"{last['last_words']}\""
+                embed.add_field(name="🏁 The Month's Final Betrayal 🏁", value=last_incident, inline=False)
+        footer_text = "Generated by GrudgeKeeper Free" if not active_entitlement else "Generated by GrudgeKeeper Premium"
+        embed.set_footer(
+        text=f"{footer_text}",
+        icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
+        )
+        embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/553164743720960010/1296332288484708383/icon64.png?ex=6711e706&is=67109586&hm=90dd6486c2ba6e755b6cdca80182867367bfe95cbb627bba7b03472d3ce3a01d&")
+            
+        return embed
     def generate_multi_kill_insights(self, kills):
         #logging.info(f"Starting to generate multi-kill insights. Total kills to process: {len(kills)}")
         multi_kill_insights = []
@@ -565,6 +586,21 @@ class DynamoDBHandler:
         logging.info(f"Generating grudge report for {user1} and {user2} with limit {limit} and page {page} and server_id {server_id}")
         try:
             kill_data = self.get_kills_bidirectional(user1, user2)
+            if len(kill_data) == 0:
+                embed = discord.Embed(
+                title=f"📜 No incidents between {self.get_name_fromid(user1)} and {self.get_name_fromid(user2)} 📜",
+                description=f" ",
+                color=discord.Color.blue().value,
+                timestamp=datetime.now()
+                )
+                embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/553164743720960010/1296332288484708383/icon64.png?ex=6711e706&is=67109586&hm=90dd6486c2ba6e755b6cdca80182867367bfe95cbb627bba7b03472d3ce3a01d&")
+                footer_text = "Generated by GrudgeKeeper Free" if not active_entitlement else "Generated by GrudgeKeeper Premium"
+                embed.set_footer(
+                text=f"{footer_text}",
+                icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
+                )
+                dicted_embed = embed.to_dict()
+                return dicted_embed, False
             grudge_count = 0
             incidents = []
             #logging.info(f"Raw kill data: {kill_data}")
