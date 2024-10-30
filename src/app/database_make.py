@@ -183,4 +183,3 @@ if __name__ == "__main__":
         handler.add_gsi()
     else:
         print("No changes made to the table.")
-    

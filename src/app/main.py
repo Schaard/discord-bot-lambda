@@ -89,12 +89,173 @@ def has_active_entitlement(guild_id, sku_id, entitlements):
             if entitlement.get('ends_at') is None:  # Active entitlement
                 return True
     return False
+def send_report(guild_id, active_entitlement):
+    # Generate a monthly report for the server (guild)
+    
+    # Generate the report using your DynamoDB handler
+    report, channel_to_post_in = generate_report(guild_id, active_entitlement)
+
+    report = {
+        "content": "",
+        "tts": False,
+        "embeds": report['data']['embeds'],
+        "components": report['data']['components']
+    }
+
+    # Send the message to Discord
+    url = f"https://discord.com/api/v10/channels/{channel_to_post_in}/messages"
+    headers = {
+        "Authorization": f"Bot {os.environ.get('TOKEN')}",
+        "Content-Type": "application/json"
+    }
+    
+    response = requests.post(url, json=report, headers=headers)
+    
+    if response.status_code == 200:
+        logger.info(f"Report sent successfully to guild {guild_id}")
+    else:
+        logger.error(f"Failed to send report to guild {guild_id}. Status code: {response.status_code}, Response: {response.text}")
+
+    return response.status_code == 200
+def generate_report(server_id, active_entitlement = False):
+    # Generate a monthly report for the server (guild)
+    # Set the time range for the current month
+    #today = datetime.utcnow()
+
+    def get_last_day_of_month(any_day):
+        # The day 28 exists in every month. 4 days later, it's always next month
+        next_month = any_day.replace(day=28) + timedelta(days=4)
+        # subtracting the number of the current day brings us back to the end of current month
+        return next_month - timedelta(days=next_month.day)
+    # Get current time in UTC
+    today = datetime.now(timezone.utc)
+
+    # Calculate first day of the month
+    first_day_of_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # Calculate last day of the month
+    last_day_of_month = get_last_day_of_month(today)
+
+    # Generate the report using your DynamoDB handler
+    print(f"Getting Report for Server ID: {server_id}")
+    monthly_report, channel_to_post_in = db.get_wrapped_report(server_id, first_day_of_month, last_day_of_month, active_entitlement)
+    print(f"Monthly report: {monthly_report} + Channel: {channel_to_post_in}")
+    embed_dict = monthly_report.to_dict()
+    # Return the report as a message to the channel
+
+    components = []    
+    if not active_entitlement:
+        print("Trying to attach premium button")
+        components = [               
+            {
+                "type": 1,  # ACTION_ROW
+                "components": [
+                    {
+                        "type": 2,  # BUTTON
+                        "style": 6,  # PRIMARY
+                        "sku_id": "1296369498529730622"
+                    }
+                ]
+            }
+        ]
+
+    
+    response_data = {
+        "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+        "data": {
+            "embeds": [embed_dict],
+            "components": components
+        }
+    }
+    return response_data, channel_to_post_in
+                    
+def send_reports_to_all_guilds():
+
+    guild_list = get_all_guilds(os.environ.get("TOKEN"))
+    for guild in guild_list:
+        guild_id = guild['id']
+        guild_is_premium = guild['has_entitlement']
+        print(f"Sending report to guild {guild_id}")
+        success = send_report(guild_id, guild_is_premium)
+        if not success:
+            logger.warning(f"Failed to send report to guild {guild_id}")
+
+def get_all_guilds(bot_token):
+    application_id = os.environ.get('APPLICATION_ID')
+    sku_id = '1296369498529730622'    
+    
+    # First, get all entitled guilds
+    entitled_guilds = set()
+    entitlements_url = f"https://discord.com/api/v10/applications/{application_id}/entitlements"
+    entitlements_headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json"
+    }
+    entitlements_params = {
+        "sku_ids": sku_id,
+        "limit": 100,
+        "exclude_ended": True
+    }
+
+    while True:
+        entitlements_response = requests.get(entitlements_url, headers=entitlements_headers, params=entitlements_params)
+        if entitlements_response.status_code != 200:
+            print(f"Error fetching entitlements: {entitlements_response.status_code}, {entitlements_response.text}")
+            break
+        
+        entitlements = entitlements_response.json()
+        for entitlement in entitlements:
+            if entitlement.get('guild_id'):
+                entitled_guilds.add(entitlement['guild_id'])
+        
+        if len(entitlements) < 100:
+            break
+
+        # Prepare for the next page
+        entitlements_params["after"] = entitlements[-1]["id"]
+
+    print(f"Entitled Guilds: {entitled_guilds}")
+
+    # Now, get all guilds and mark which ones are entitled
+    url = "https://discord.com/api/v10/users/@me/guilds"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json"
+    }
+    #print(headers)
+    params = {
+        "limit": 200,
+        "with_counts": True  # Include member counts if needed
+    }
+    
+    all_guilds = []
+    
+    while True:
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            print(f"Error: {response.status_code}, {response.text}")
+            break
+        
+        guilds = response.json()
+        for guild in guilds:
+            guild['has_entitlement'] = guild['id'] in entitled_guilds
+            all_guilds.append(guild)
+        
+        if len(guilds) < 200:
+            break  # We've reached the end of the list
+        
+        # Prepare for the next page
+        params["after"] = guilds[-1]["id"]
+    
+    return all_guilds
 
 #MAIN ROUTE *******************
 @app.route("/", methods=["POST"])
 async def interactions():
     print(f"👉 Request: {request.json}")
     raw_request = request.json
+
+    
     sku_id = '1296369498529730622'  
     entitlements = raw_request.get('entitlements', [])
     #handle ping interactions so they dont crash other stuff
@@ -115,15 +276,21 @@ async def interactions():
     else:
         logging.info("No active entitlement found.")
     
+
+    #handle eventbridge payloads
+    # Check if this is an EventBridge trigger
+    if raw_request.get('interaction_token', "") == "MonthlyReportTriggered" and raw_request.get('application_id', "") == "1279716753127243786":
+        logging.info("!!!!!!EventBridge trigger received!!!!!!!!!")
+        send_reports_to_all_guilds()
+        pass
+
+
     final_response = interact(raw_request, active_entitlement)
 
     return final_response
 
-
-
-
 #INTERACT FUNCTION
-@verify_key_decorator(DISCORD_PUBLIC_KEY)
+#@verify_key_decorator(DISCORD_PUBLIC_KEY)
 def interact(raw_request, active_entitlement):
     if raw_request["type"] == 1:  # PING
         return jsonify({"type": 1}) # PONG
@@ -136,36 +303,94 @@ def interact(raw_request, active_entitlement):
             user_id = raw_request["member"]["user"]["id"]
             server_id = raw_request["guild_id"]
             match command_name:                 
+                case "help":
+                        try:
+                            # Create an embed for the help command
+                            embed = discord.Embed(
+                                title="GrudgeKeeper Help",
+                                description="Here are the available commands for GrudgeKeeper:",
+                                color=discord.Color.blue().value,
+                                timestamp=datetime.now()
+                            )
+
+                            # Add fields for each command
+                            embed.add_field(
+                                name="/report",
+                                value="Get a friendly-fire report for this server.",
+                                inline=False
+                            )
+                            embed.add_field(
+                                name="/hallofshame",
+                                value="Show the most egregious teamkillers.",
+                                inline=False
+                            )
+                            embed.add_field(
+                                name="/oops <victim>",
+                                value="Record a grudge on behalf of your victim. Mention the user you killed.",
+                                inline=False
+                            )
+                            embed.add_field(
+                                name="/grudge <killer>",
+                                value="Record a grudge against your killer. Mention the user who killed you.",
+                                inline=False
+                            )
+                            embed.add_field(
+                                name="/grudges <user1> [user2]",
+                                value="Generate a report of grudges between two users. If user2 is omitted, it will show grudges between you and user1.",
+                                inline=False
+                            )
+                            embed.add_field(
+                                name="/help",
+                                value="Show this help message.",
+                                inline=False
+                            )
+
+                            # Set thumbnail and footer
+                            embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/553164743720960010/1296332288484708383/icon64.png?ex=6711e706&is=67109586&hm=90dd6486c2ba6e755b6cdca80182867367bfe95cbb627bba7b03472d3ce3a01d&")
+                            footer_text = "Grudgekeeper Free resets monthly. Premium ($1.99) grudges are eternal." if not active_entitlement else "Generated by GrudgeKeeper Premium"
+                            embed.set_footer(
+                                text=footer_text,
+                                icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
+                            )
+
+                            # Convert the embed to a dict
+                            embed_dict = embed.to_dict()
+
+                            # Prepare the response
+                            response_data = {
+                                "type": 4,
+                                "data": {
+                                    "embeds": [embed_dict]
+                                }
+                            }
+                            # Add premium button if entitlement is not active
+                            if not active_entitlement:
+                                response_data["data"]["components"] = [
+                                    {
+                                        "type": 1,  # Action Row
+                                        "components": [
+                                            {
+                                                "type": 2,  # Button
+                                                "style": 5,  # Link button
+                                                "label": "Upgrade to Premium ($1.99)",
+                                                "url": "https://discord.com/application-directory/1296369498529730622"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            return jsonify(response_data)
+                        except Exception as e:
+                            logger.error(f"Error generating help message: {str(e)}")
+                            response_data = {
+                                "type": 4,
+                                "data": {"content": f"Error generating help message: {str(e)}"}
+                            }
+                        
+                        return jsonify(response_data)
                 case "report":
-                    # Generate a monthly report for the server (guild)
-                    server_id = str(raw_request["guild_id"])
-                    # Set the time range for the current month
-                    today = datetime.utcnow()
-
-                    def get_last_day_of_month(any_day):
-                        # The day 28 exists in every month. 4 days later, it's always next month
-                        next_month = any_day.replace(day=28) + timedelta(days=4)
-                        # subtracting the number of the current day brings us back to the end of current month
-                        return next_month - timedelta(days=next_month.day)
-                    # Get current time in UTC
-                    today = datetime.now(timezone.utc)
-
-                    # Calculate first day of the month
-                    first_day_of_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-                    # Calculate last day of the month
-                    last_day_of_month = get_last_day_of_month(today)
-
-                    # Generate the report using your DynamoDB handler
-                    monthly_report = db.get_wrapped_report(server_id, first_day_of_month, last_day_of_month, active_entitlement)
-                    embed_dict = monthly_report.to_dict()
-                    # Return the report as a message to the channel
-                    response_data = {
-                        "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
-                        "data": {
-                            "embeds": [embed_dict]
-                        }
-                    }
+                    
+                    this_guild_id = str(raw_request["guild_id"])
+                    response_data, channel_to_post_in = generate_report(this_guild_id)
                     return jsonify(response_data)                
                 case "grudge":
                     killer = data["options"][0]["value"]
@@ -271,7 +496,10 @@ def interact(raw_request, active_entitlement):
                             raise ValueError("Invalid number of arguments for grudgereport")
                         #logging.info(f"Grudge report generated: {report}")
                         logging.info(f"Result from generate_grudge_report: {report}")
-        
+                        
+                        #Determine the next page number based on premium status
+                        next_page = page + 1 if active_entitlement else page
+                        
                         #Make the button if there's more!
                         components = []
                         if has_more:
@@ -284,7 +512,7 @@ def interact(raw_request, active_entitlement):
                                             "type": 2,  # BUTTON
                                             "style": 1,  # PRIMARY
                                             "label": "Older",
-                                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page+1}"
+                                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{next_page}"
                                         }
                                     ]
                                 }
@@ -303,7 +531,7 @@ def interact(raw_request, active_entitlement):
                             "type": 4,
                             "data": {"content": f"Error generating grudge report: {str(e)}"}
                         }
-                    
+                    logging.info(f"Grudges response data: {response_data}")
                     return jsonify(response_data)
                 case "hallofshame":
                     try:
@@ -800,7 +1028,7 @@ def start_message_step_function(raw_request, messages = None, embed = None, foll
     # Initialize AWS Step Functions client
     stepfunctions_client = boto3.client('stepfunctions')
     
-    #logging.info(f"STARTING STEP FUNCTION: {STEP_FUNCTION_ARN}")
+    logging.info(f"STARTING STEP FUNCTION: {STEP_FUNCTION_ARN}")
     
     # Prepare the payload for the Step Function
     step_function_payload = {
@@ -864,6 +1092,13 @@ def handle_component_interaction(raw_request, active_entitlement):
                 }
             })        
     elif custom_id.startswith("grudgereport_pagination_"):
+        # Parse the custom_id to extract necessary information
+        _, __, user1, user2, page = custom_id.split("_")
+        page = int(page)
+        #logging.info(f"Pagination requested for {user1} and {user2} at page {page}")
+        custom_footer = None if active_entitlement else "Unlock GrudgeKeeper Premium to browse grudges."
+        report, has_more = db.generate_grudge_report(user1, user2, 8, page, raw_request["guild_id"], active_entitlement, custom_footer)
+
         if not active_entitlement:
             components = [               
                 {
@@ -877,35 +1112,24 @@ def handle_component_interaction(raw_request, active_entitlement):
                         },
                         {
                             "type": 2,  # BUTTON
-                            "style": 1,  # PRIMARY
-                            "label": "Newer",
-                            "custom_id": f"grudgereport_pagination_{user1}_{user2}_{page}",
-                            "disabled": page == 0  # Disable if it's the first page
-                        },
-                        {
-                            "type": 2,  # BUTTON
                             "style": 6,  # PRIMARY
-                            "label": "GrudgeKeeper Premium - $1.99"
+                            "sku_id": "1296369498529730622"
                         }
                     ]
                 }
             ]
+            
             response_data = {
                 "type": 7,
-                "embeds": raw_request['embeds'],  
                 "data": {
+                    "embeds": [report],
                     "components": components
                 }
             }
-            logging.info(f"Pagination response: {response_data}")
+            logging.info(f"NON-PREMIUM Pagination response: {response_data}")
             return response_data
         
-        # Parse the custom_id to extract necessary information
-        _, __, user1, user2, page = custom_id.split("_")
-        page = int(page)
-        #logging.info(f"Pagination requested for {user1} and {user2} at page {page}")
-        report, has_more = db.generate_grudge_report(user1, user2, 8, page, raw_request["guild_id"], active_entitlement)
-        
+
         components = []
         if has_more:
             components = [               

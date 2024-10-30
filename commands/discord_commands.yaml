@@ -6,6 +6,10 @@
   description: "Show the most egregious teamkillers"
   type: 1 # CHAT_INPUT
 
+- name: "help"
+  description: "Show all GrudgeKeeper commands"
+  type: 1 # CHAT_INPUT
+
 - name: "oops"
   description: "Record a grudge on behalf of your victim"
   type: 1 # CHAT_INPUT
