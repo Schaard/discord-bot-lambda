@@ -408,7 +408,7 @@ def interact(raw_request, active_entitlement):
                                         {
                                             "type": 4,  # TEXT_INPUT
                                             "custom_id": "cause_of_death_input",
-                                            "style": 1,  # Short input
+                                            "style": 2,  # Short input
                                             "label": "Cause of Death (optional)",
                                             "placeholder": "What was the cause of death?",
                                             "required": False
@@ -423,11 +423,24 @@ def interact(raw_request, active_entitlement):
                                             "custom_id": "last_words_input",
                                             "style": 2,  # Paragraph input (multi-line)
                                             "label": "Last Words (optional)",
-                                            "placeholder": "What was said over voice chat?",
+                                            "placeholder": "What was said?",
                                             "required": False
                                         }
                                     ]
-                                }
+                                },
+                                {
+                                    "type": 1,  # ACTION_ROW
+                                    "components": [
+                                        {
+                                            "type": 4,  # TEXT_INPUT
+                                            "custom_id": "Evidence",
+                                            "style": 1,  
+                                            "label": "Link to Evidence (optional)",
+                                            "placeholder": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                                            "required": False
+                                        }
+                                    ]
+                                },
                             ]
                         }
                     }
@@ -448,7 +461,7 @@ def interact(raw_request, active_entitlement):
                                         {
                                             "type": 4,  # TEXT_INPUT
                                             "custom_id": "cause_of_death_input",
-                                            "style": 1,  # Short input
+                                            "style": 2,  # Short input
                                             "label": "Cause of Death (optional)",
                                             "placeholder": "What was the cause of death?",
                                             "required": False
@@ -464,6 +477,19 @@ def interact(raw_request, active_entitlement):
                                             "style": 2,  # Paragraph input (multi-line)
                                             "label": "Last Words (optional)",
                                             "placeholder": "What was said over voice chat?",
+                                            "required": False
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 1,  # ACTION_ROW
+                                    "components": [
+                                        {
+                                            "type": 4,  # TEXT_INPUT
+                                            "custom_id": "Evidence",
+                                            "style": 1,  # Paragraph input (multi-line)
+                                            "label": "Link to Evidence (optional)",
+                                            "placeholder": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                                             "required": False
                                         }
                                     ]
@@ -541,11 +567,14 @@ def interact(raw_request, active_entitlement):
                         
                         # Create an embed
                         embed = discord.Embed(title="🏆 Hall of Shame 🏆", 
-                                            description="Players with the most unforgiven kills",
+                                            description="Players with the most unforgiven kills.",
                                             timestamp=datetime.now(),
                                             color=discord.Color.blue().value)  # You can choose any color you like
                         
                         embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/553164743720960010/1296332288484708383/icon64.png?ex=6711e706&is=67109586&hm=90dd6486c2ba6e755b6cdca80182867367bfe95cbb627bba7b03472d3ce3a01d&")
+                                        # Highlighted message about reset vs. premium grudge retention
+
+                        
                         footer_text = "Generated by GrudgeKeeper Free" if not active_entitlement else "Generated by GrudgeKeeper Premium"
                         embed.set_footer(
                         text=f"{footer_text}",
@@ -558,6 +587,20 @@ def interact(raw_request, active_entitlement):
                                 embed.add_field(name=f"{i}. {name}: ({kill_count} kills)", value="", inline=False)                            
                         else:
                             embed.description += "\nThe Hall of Shame is empty. Be the first to make a mistake!"
+                        
+                        if active_entitlement:
+                            highlight_title = "\n👁️ The Hall is Eternal 👁️"
+                            highlight_message = "Thanks to GrudgeKeeper Premium, the Hall of Shame reflects grudges across all time."
+                        else:
+                            highlight_title = "\n🌘 Monthly Hall of Shame 🌘"
+                            highlight_message = "GrudgeKeeper Free's hall of shame resets monthly. GrudgeKeeper Premium preserves shame forever."
+
+                        # Add the message as a new field for high visibility
+                        embed.add_field(
+                            name=highlight_title,
+                            value=highlight_message,
+                            inline=False  # Making it full-width for emphasis
+                        )
                     except Exception as e:
                             # In case of an error, create an error embed
                             embed = discord.Embed(title="Error", 
@@ -566,10 +609,27 @@ def interact(raw_request, active_entitlement):
                     # Convert the embed to a dict for the response
                     embed_dict = embed.to_dict()
 
+                    components = []    
+                    if not active_entitlement:
+                        print("Trying to attach premium button")
+                        components = [               
+                            {
+                                "type": 1,  # ACTION_ROW
+                                "components": [
+                                    {
+                                        "type": 2,  # BUTTON
+                                        "style": 6,  # PRIMARY
+                                        "sku_id": "1296369498529730622"
+                                    }
+                                ]
+                            }
+                        ]
+
                     response_data = {
                         "type": 4,
                         "data": {
-                            "embeds": [embed_dict]
+                            "embeds": [embed_dict],
+                            "components": components
                         }
                     }
                     return jsonify(response_data)                 
@@ -624,7 +684,7 @@ def interact(raw_request, active_entitlement):
                     cause_of_death = sanitize_input(cause_of_death)
                     last_words = data["components"][1]["components"][0]["value"]
                     last_words = sanitize_input(last_words)
-                    #unforgivable = data["components"][2]["components"][0]["value"]
+                    evidence_link = data["components"][2]["components"][0]["value"]
                     #unforgivable = interpret_boolean_input(unforgivable)
                     
                     #can't forgive your own oops 
@@ -636,11 +696,11 @@ def interact(raw_request, active_entitlement):
                     channel_id = str(raw_request["channel_id"])
 
                     # Get the current UTC time and format it as ISO 8601 string
-                    timestamp = datetime.utcnow().isoformat()
+                    timestamp = datetime.now(timezone.utc).isoformat()
 
                     # Now you can use the victim ID along with other modal input data
                     try:
-                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven)
+                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven, evidence_link)
 
                         grudge_announcement_message = get_grudge_announcement()
 
@@ -653,14 +713,16 @@ def interact(raw_request, active_entitlement):
                         if last_words:
                             content_for_kill_message += f' Their last words were: "{last_words}"'
 
+                        if evidence_link:
+                            content_for_kill_message += f' The evidence: {evidence_link}'
                         #if unforgivable:
                         #    content_for_kill_message += " This grudge has been marked UNFORGIVABLE!"
 
                         #if not unforgivable and forgiven:
                         #    content_for_kill_message += f" {get_name_fromid(victim)} forgave them instantly."
 
-                        user_kills = db.get_unforgivencount_on_user(user_id, victim)
-                        compare_kills = db.get_unforgivencount_on_user(victim, user_id)
+                        user_kills = db.get_unforgivencount_on_user(user_id, victim, server_id, active_entitlement)
+                        compare_kills = db.get_unforgivencount_on_user(victim, user_id, server_id, active_entitlement)
                         user_name = get_user_name(raw_request, victim)
                         victim_name = get_user_name(raw_request, user_id)
                         end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"                                                
@@ -669,7 +731,7 @@ def interact(raw_request, active_entitlement):
                             content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
                         else:
                             content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
-                        
+                        content_for_kill_message += f"\n\n{user_name}: will you forgive or keep the grudge?"
                         
                         # Create an embed
                         embed = discord.Embed(
@@ -706,7 +768,7 @@ def interact(raw_request, active_entitlement):
                                             },
                                             {
                                                 "type": 2,  # Button
-                                                "label": "Do Not Forgive",  # Not forgiving action
+                                                "label": "Keep Grudge",  # Not forgiving action
                                                 "style": 4,  # Red button (Danger)
                                                 "custom_id": f"grudge_{user_id}_{victim}_{timestamp}"
                                             }
@@ -735,7 +797,7 @@ def interact(raw_request, active_entitlement):
                     cause_of_death = sanitize_input(cause_of_death)
                     last_words = data["components"][1]["components"][0]["value"]
                     last_words = sanitize_input(last_words)
-                    #unforgivable = data["components"][2]["components"][0]["value"]
+                    evidence_link = data["components"][2]["components"][0]["value"]
                     #unforgivable = interpret_boolean_input(unforgivable)
                     forgiven = False
                     #forgiven = interpret_boolean_input(forgiven)
@@ -746,11 +808,11 @@ def interact(raw_request, active_entitlement):
                     channel_id = str(raw_request["channel_id"])
 
                     # Get the current UTC time and format it as ISO 8601 string
-                    timestamp = datetime.utcnow().isoformat()
+                    timestamp = datetime.now(timezone.utc).isoformat()
 
                     # Now you can use the victim ID along with other modal input data
                     try:
-                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven)
+                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven, evidence_link)
                         grudge_announcement_message = get_grudge_announcement()
                         # Construct the message_content dynamically
                         if cause_of_death is None or cause_of_death == "":
@@ -760,15 +822,17 @@ def interact(raw_request, active_entitlement):
 
                         if last_words:
                             content_for_kill_message += f' Their last words were: "{last_words}"'
-
+                        
+                        if evidence_link:
+                            content_for_kill_message += f' The evidence: {evidence_link}'
                         #if unforgivable:
                         #    content_for_kill_message += " This grudge has been marked UNFORGIVABLE!"
 
                         #if not unforgivable and forgiven:
                         #    content_for_kill_message += f" {get_name_fromid(victim)} forgave them instantly."
 
-                        user_kills = db.get_unforgivencount_on_user(user_id, victim)
-                        compare_kills = db.get_unforgivencount_on_user(victim, user_id)
+                        user_kills = db.get_unforgivencount_on_user(user_id, victim, server_id, active_entitlement)
+                        compare_kills = db.get_unforgivencount_on_user(victim, user_id, server_id, active_entitlement)
                         user_name = get_user_name(raw_request, victim)
                         victim_name = get_user_name(raw_request, user_id)
                         
@@ -778,7 +842,7 @@ def interact(raw_request, active_entitlement):
                             content_for_kill_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
                         else:
                             content_for_kill_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
-                        
+                        content_for_kill_message += f"\n\n{user_name}: will you forgive or keep the grudge?"                        
                         # Create an embed
                         embed = discord.Embed(
                             title=f"{grudge_announcement_message}",
@@ -815,7 +879,7 @@ def interact(raw_request, active_entitlement):
                                             },
                                             {
                                                 "type": 2,  # Button
-                                                "label": "Do Not Forgive",  # Not forgiving action
+                                                "label": "Keep Grudge",  # Not forgiving action
                                                 "style": 4,  # Red button (Danger)
                                                 "custom_id": f"grudge_{user_id}_{victim}_{timestamp}"
                                             }
@@ -857,7 +921,7 @@ def get_random_forgiveness_message(postforgiveness_grudge_description):
 def handle_forgive_button(raw_request, active_entitlement):
     # Extract the custom_id from the interaction
     custom_id = raw_request['data']['custom_id']
-    
+    server_id = raw_request['guild_id']
     # Parse the custom_id to get the relevant fields
     action, user_id, victim, timestamp = custom_id.split('_')
     
@@ -884,12 +948,12 @@ def handle_forgive_button(raw_request, active_entitlement):
         # Use the parsed information to mark the specific kill as forgiven in the database
         db.forgive_kill(user_id, victim, timestamp)
        
-        user_unforgiven_count = db.get_unforgivencount_on_user(user_id, victim)
-        victim_unforgiven_count = db.get_unforgivencount_on_user(victim, user_id)
+        user_unforgiven_count = db.get_unforgivencount_on_user(user_id, victim, server_id, active_entitlement)
+        victim_unforgiven_count = db.get_unforgivencount_on_user(victim, user_id, server_id, active_entitlement)
         
         grudgeholder_id = user_id if user_unforgiven_count < victim_unforgiven_count else victim
         grudgeholder_name = user_name if grudgeholder_id == user_id else victim_name
-        new_grudge = db.get_grudge_string(user_id, db.get_unforgivencount_on_user(user_id, victim), victim, db.get_unforgivencount_on_user(victim, user_id), False)
+        new_grudge = db.get_grudge_string(user_id, db.get_unforgivencount_on_user(user_id, victim, server_id, active_entitlement), victim, db.get_unforgivencount_on_user(victim, user_id, server_id, active_entitlement), False)
         grudge_adjustment_string = get_random_forgiveness_message(new_grudge)
         
         embed.add_field(name="\u200b", value=grudge_adjustment_string, inline=False)
@@ -1126,7 +1190,7 @@ def handle_component_interaction(raw_request, active_entitlement):
                     "components": components
                 }
             }
-            logging.info(f"NON-PREMIUM Pagination response: {response_data}")
+            #logging.info(f"NON-PREMIUM Pagination response: {response_data}")
             return response_data
         
 
@@ -1181,7 +1245,7 @@ def handle_component_interaction(raw_request, active_entitlement):
                 }
             })
         else:
-            return "This isn't your grudge."
+            return "This isn't your grudge to forgive."
 def interpret_boolean_input(user_input=None, default_value=False) -> bool:
     # Define broad range of inputs for yes and no
     yes_responses = {"y", "ya", "yes", "ye", "yah", "yep", "yup", "yse", "yeah", "yass", "yas", "YES"}
