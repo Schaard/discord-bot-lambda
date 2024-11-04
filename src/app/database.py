@@ -658,13 +658,14 @@ class DynamoDBHandler:
                     incidents.append(incident)
 
             # Process kills from user1 to user2
-            for kill in kill_data[0].get('KillRecords', []):
-                process_kill(kill, user1, user2)
+            if kill_data and len(kill_data) > 0:
+                for kill in kill_data[0].get('KillRecords', []):
+                    process_kill(kill, user1, user2)
 
             # Process kills from user2 to user1
-            for kill in kill_data[1].get('KillRecords', []):
-                process_kill(kill, user2, user1)
-
+            if kill_data and len(kill_data) > 1:
+                for kill in kill_data[1].get('KillRecords', []):
+                    process_kill(kill, user2, user1)
 
             logging.info(f"Processed incidents: {incidents}")
 

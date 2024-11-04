@@ -743,7 +743,7 @@ def interact(raw_request, active_entitlement):
                         text=f"{footer_text}",
                         icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
                         )
-                        embed.add_field(name="Grudge Change", value=content_for_grudge_message, inline=False)
+                        embed.add_field(name="\u200b", value=content_for_grudge_message, inline=False)
                         # Convert the embed to a dict
                         embed_dict = embed.to_dict()
 
@@ -853,7 +853,7 @@ def interact(raw_request, active_entitlement):
                         text=f"{footer_text}",
                         icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
                         )
-                        embed.add_field(name="Grudge Change", value=content_for_grudge_message, inline=False)
+                        embed.add_field(name="\u200b", value=content_for_grudge_message, inline=False)
                         # Convert the embed to a dict
                         embed_dict = embed.to_dict()
 
