@@ -154,7 +154,10 @@ class DynamoDBHandler:
             print(f"Error counting unforgiven kills: {e.response['Error']['Message']}")
             raise
 
-    #String gen 
+    #String gen
+    def create_discord_timestamp(self, iso_timestamp):
+        unix_timestamp = int(datetime.fromisoformat(iso_timestamp).timestamp())
+        return f"<t:{unix_timestamp}:d>, <t:{unix_timestamp}:t>"
     def get_grudge_string(self, user_id, user_kills, compare_user, compare_kills, no_article = False):
         #if the user_id and the compare_user_id are the same, just take the total kills instead of comparing
         logging.info(f"get_grudge_string: {user_id} {user_kills} {compare_user} {compare_kills}")
@@ -168,14 +171,14 @@ class DynamoDBHandler:
         #message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
 
         lead_descriptors = {
-            0: "😇 no grudge 😇",
+            0: "⚖️ a balanced grudge ⚖️",
             1: "🌱 a budding grudge 🌱",
             2: "🙈 a double grudge 🙈",
             3: "😬 a triple grudge 😬",
             4: "🔥 a QUADRUPLE grudge 🔥",
             5: "💥 a PENTAGRUDGE 💥",
             6: "👹 a MONSTER GRUDGE 👹",
-            7: "⚡ an OMEGA SUPER GRUDGE ⚡",
+            7: "⚡ an OMEGA GRUDGE ⚡",
             8: "🧬 a GENETICALLY ENGINEERED SUPER GRUDGE 🧬",
             9: "🚨 a GRUDGE-LEVEL RED (emergency protocols activated) 🚨",
             10: "📜 an ANCIENT GRUDGE, foretold in portents unseen, inscribed in the stars themselves 📜",
@@ -193,8 +196,8 @@ class DynamoDBHandler:
             22: "🕳️ an ALL-CONSUMING black hole of grudge which draws other, smaller grudges to itself, incorporating them into its power for a purpose unfathomable by higher minds than the primitive organic mass of logical shambling that is the human brain 🕳️",
             23: "🌌 a COSMIC GRUDGE spanning the entire grudgepast, grudgepresent, and grudgefuture 🌌",
             24: "👾 a GOD-TIER allgrudge transcending grudgespace and grudgetime 👾",
-            69: "nice (grudge)",
-            420: "blazing grudge"
+            69: "a nice grudge",
+            420: "a blazing grudge"
         }
 
         if not self_grudge:
@@ -417,7 +420,7 @@ class DynamoDBHandler:
             response2 = self.table.query(
                 KeyConditionExpression=Key('UserId').eq(target_user_id) & Key('TargetUserId').eq(user_id)
             )
-            return response1.get('Items', []) + response2.get('Items', [])
+            return response1.get('Items', []), response2.get('Items', [])
 
         except ClientError as e:
             print(f"Error retrieving kills: {e.response['Error']['Message']}")
@@ -607,7 +610,7 @@ class DynamoDBHandler:
         logging.info(f"Generating grudge report for {user1} and {user2} with limit {limit} and page {page} and server_id {server_id}")
         try:
             kill_data = self.get_kills_bidirectional(user1, user2)
-            if len(kill_data) == 0:
+            if not kill_data or (len(kill_data[0]) == 0 and len(kill_data[1]) == 0):
                 embed = discord.Embed(
                 title=f"📜 No incidents between {self.get_name_fromid(user1)} and {self.get_name_fromid(user2)} 📜",
                 description=f" ",
@@ -625,7 +628,7 @@ class DynamoDBHandler:
             grudge_count = 0
             incidents = []
             current_date = datetime.now(timezone.utc)
-            #logging.info(f"Raw kill data: {kill_data}")
+            logging.info(f"Raw kill data: {kill_data}")
             # Process kills from user1 to user2
             def process_kill(kill, killer_id, target_id):
                 forgiven_value = kill.get('Forgiven', False)
@@ -658,13 +661,13 @@ class DynamoDBHandler:
                     incidents.append(incident)
 
             # Process kills from user1 to user2
-            if kill_data and len(kill_data) > 0:
-                for kill in kill_data[0].get('KillRecords', []):
+            for kill_group in kill_data[0]:
+                for kill in kill_group.get('KillRecords', []):
                     process_kill(kill, user1, user2)
 
             # Process kills from user2 to user1
-            if kill_data and len(kill_data) > 1:
-                for kill in kill_data[1].get('KillRecords', []):
+            for kill_group in kill_data[1]:
+                for kill in kill_group.get('KillRecords', []):
                     process_kill(kill, user2, user1)
 
             logging.info(f"Processed incidents: {incidents}")
@@ -720,7 +723,7 @@ class DynamoDBHandler:
             #logging.info(f"grudgeholder_name: {grudgeholder_name}, begrudged_name: {begrudged_name}, left_unforgivencount_on_right: {left_unforgivencount_on_right}, right_unforgivencount_on_left: {right_unforgivencount_on_left}")
             grudge_desc_string = self.get_grudge_string(left_user_id, left_unforgivencount_on_right, right_user_id, right_unforgivencount_on_left)
             #current_grudge_string = f"A {abs(grudge_count)} point difference in unforgiven kills gives {grudgeholder_name}\n {grudge_desc_string} against {begrudged_name}."
-            current_grudge_string = f"{grudgeholder_name} holds a {grudge_desc_string}, leading by {abs(grudge_count)} unforgiven kills ({left_unforgivencount_on_right} vs {right_unforgivencount_on_left})."
+            current_grudge_string = f"{grudgeholder_name} holds {grudge_desc_string}, leading by {abs(grudge_count)} unforgiven kills ({left_unforgivencount_on_right} vs {right_unforgivencount_on_left})."
             # Create the embed
             embed = discord.Embed(
                 title=f"📜 Grudges between {left_name} and {right_name} 📜",
@@ -743,8 +746,12 @@ class DynamoDBHandler:
             previous_grudge_count = 0
             # Add each incident as a field in the embed
             for incident in paginated_incidents:
-                timestamp = datetime.fromisoformat(incident['Timestamp']).strftime('%-m/%d/%-y, %-I:%M %p')
+                #timestamp = datetime.fromisoformat(incident['Timestamp']).strftime('%-m/%d/%-y, %-I:%M %p')
+                # Convert ISO timestamp to Unix timestamp
+                unix_timestamp = int(datetime.fromisoformat(incident['Timestamp']).timestamp())
 
+                # Create Discord timestamp
+                discord_timestamp = self.create_discord_timestamp(incident['Timestamp'])
                 killer_name_is_left = incident['UserId'] == user1
 
                 killer_name = left_name if killer_name_is_left else right_name
@@ -760,7 +767,7 @@ class DynamoDBHandler:
 
                 kill_directional_arrow = "🔪" if killer_name_is_left else "🗡️"
                 main_message_embed_value = f"{left_name} {kill_directional_arrow} {right_name}\n"
-                embed.add_field(name=f"{timestamp}", value=main_message_embed_value, inline=True)
+                embed.add_field(name=f"{discord_timestamp}", value=main_message_embed_value, inline=True)
                 
                 # Generate the dynamic grudge change string
                 grudge_change_string = f"{grudgeholder_name} leads by {abs(grudge_count)}" if abs(grudge_count) != 0 else ""

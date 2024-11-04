@@ -312,11 +312,9 @@ def interact(raw_request, active_entitlement):
                                 color=discord.Color.blue().value,
                                 timestamp=datetime.now()
                             )
-
-                            # Add fields for each command
                             embed.add_field(
-                                name="/hallofshame",
-                                value="Show the worst teamkillers on the server.",
+                                name="/grudge <killer>",
+                                value="Victim of friendly fire? Record a grudge against your trigger-happy teammate.",
                                 inline=False
                             )
                             embed.add_field(
@@ -325,13 +323,14 @@ def interact(raw_request, active_entitlement):
                                 inline=False
                             )
                             embed.add_field(
-                                name="/grudge <killer>",
-                                value="Victim of friendly fire? Record a grudge against your trigger-happy teammate.",
-                                inline=False
-                            )
-                            embed.add_field(
                                 name="/grudgelist <user1> [user2]",
                                 value="List incidents between two users. If user2 is blank, shows those between user1 and you.",
+                                inline=False
+                            )
+                            # Add fields for each command
+                            embed.add_field(
+                                name="/hallofshame",
+                                value="Show the worst teamkillers on the server.",
                                 inline=False
                             )
                             embed.add_field(
@@ -587,10 +586,10 @@ def interact(raw_request, active_entitlement):
                         
                         if active_entitlement:
                             highlight_title = "\n👁️ The Hall is Eternal 👁️"
-                            highlight_message = "Thanks to GrudgeKeeper Premium, the Hall of Shame reflects grudges across all time."
+                            highlight_message = "GrudgeKeeper Premium's Hall of Shame reflects grudges across all time."
                         else:
                             highlight_title = "\n🌘 Monthly Hall of Shame 🌘"
-                            highlight_message = "GrudgeKeeper Free's hall of shame resets monthly. GrudgeKeeper Premium preserves shame forever."
+                            highlight_message = "GrudgeKeeper Free's Hall of Shame resets monthly. GrudgeKeeper Premium preserves shame forever."
 
                         # Add the message as a new field for high visibility
                         embed.add_field(
@@ -725,9 +724,9 @@ def interact(raw_request, active_entitlement):
                         end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"                                                
                         content_for_grudge_message = ""
                         if user_kills > compare_kills:
-                            content_for_grudge_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
+                            content_for_grudge_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
                         else:
-                            content_for_grudge_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
+                            content_for_grudge_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
                         content_for_grudge_message += f"\n\n{user_name}: will you forgive or keep the grudge?"
                         
                         # Create an embed
@@ -836,9 +835,9 @@ def interact(raw_request, active_entitlement):
                         end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"
                         content_for_grudge_message = ""
                         if user_kills > compare_kills:
-                            content_for_grudge_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and only {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
+                            content_for_grudge_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
                         else:
-                            content_for_grudge_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and only {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
+                            content_for_grudge_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
                         content_for_grudge_message += f"\n\n{user_name}: will you forgive or keep the grudge?"                        
                         # Create an embed
                         embed = discord.Embed(
