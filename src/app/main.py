@@ -315,28 +315,23 @@ def interact(raw_request, active_entitlement):
 
                             # Add fields for each command
                             embed.add_field(
-                                name="/report",
-                                value="Get a friendly-fire report for this server.",
-                                inline=False
-                            )
-                            embed.add_field(
                                 name="/hallofshame",
-                                value="Show the most egregious teamkillers.",
+                                value="Show the worst teamkillers on the server.",
                                 inline=False
                             )
                             embed.add_field(
                                 name="/oops <victim>",
-                                value="Record a grudge on behalf of your victim. Mention the user you killed.",
+                                value="Killed your friend? Record a grudge on their behalf.",
                                 inline=False
                             )
                             embed.add_field(
                                 name="/grudge <killer>",
-                                value="Record a grudge against your killer. Mention the user who killed you.",
+                                value="Victim of friendly fire? Record a grudge against your trigger-happy teammate.",
                                 inline=False
                             )
                             embed.add_field(
-                                name="/grudges <user1> [user2]",
-                                value="Generate a report of grudges between two users. If user2 is omitted, it will show grudges between you and user1.",
+                                name="/grudgelist <user1> [user2]",
+                                value="List incidents between two users. If user2 is blank, shows those between user1 and you.",
                                 inline=False
                             )
                             embed.add_field(
@@ -387,11 +382,13 @@ def interact(raw_request, active_entitlement):
                             }
                         
                         return jsonify(response_data)
-                case "report":
-                    
-                    this_guild_id = str(raw_request["guild_id"])
-                    response_data, channel_to_post_in = generate_report(this_guild_id)
-                    return jsonify(response_data)                
+                                
+                #case "report":
+                #    
+                #    this_guild_id = str(raw_request["guild_id"])
+                #    response_data, channel_to_post_in = generate_report(this_guild_id)
+                #    return jsonify(response_data)       
+                     
                 case "grudge":
                     killer = data["options"][0]["value"]
                     
@@ -498,7 +495,7 @@ def interact(raw_request, active_entitlement):
                         }
                     }
                     return jsonify(response_data)
-                case "grudges":
+                case "grudgelist":
                     try:
                         options = data.get("options", [])
                         page = 0  # Default to first page

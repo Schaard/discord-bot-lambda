@@ -1,7 +1,3 @@
-- name: "report"
-  description: "Get a friendly-fire report for this server"
-  type: 1  # CHAT_INPUT
-
 - name: "hallofshame"
   description: "Show the most egregious teamkillers"
   type: 1 # CHAT_INPUT
@@ -28,8 +24,8 @@
       description: "The user who killed you"
       required: true
 
-- name: "grudges"
-  description: "Generate a report of grudges between two users"
+- name: "grudgelist"
+  description: "Generate a list of grudges between two users"
   type: 1 # CHAT_INPUT
   options:
     - name: "user1"
@@ -38,5 +34,5 @@
       required: true
     - name: "user2"
       type: 6 # USER
-      description: "Second user (or leave blank for self)"
+      description: "Second user (leave blank for self)"
       required: false
