@@ -672,8 +672,8 @@ def interact(raw_request, active_entitlement):
                     logger.info("Oops modal submit received")                    
                     data = raw_request["data"]
                     custom_id = data["custom_id"]
-                    victim = parts[3] # Extract the victim ID from the custom_id
                     user_id = parts[2]  # Extract the user ID from the custom_id
+                    victim = parts[3] # Extract the victim ID from the custom_id
 
                     # Process other modal inputs
                     cause_of_death = data["components"][0]["components"][0]["value"]
@@ -721,12 +721,15 @@ def interact(raw_request, active_entitlement):
                         compare_kills = db.get_unforgivencount_on_user(victim, user_id, server_id, active_entitlement)
                         user_name = get_user_name(raw_request, victim)
                         victim_name = get_user_name(raw_request, user_id)
-                        end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"                                                
+                        end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills)}"                                                
+                        
+                        
+                        
                         content_for_grudge_message = ""
                         if user_kills > compare_kills:
-                            content_for_grudge_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
+                            content_for_grudge_message += f"\nWith {user_kills} unforgiven deaths from {victim_name} and {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
                         else:
-                            content_for_grudge_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
+                            content_for_grudge_message += f"\nWith {compare_kills} unforgiven deaths from {user_name} and {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
                         content_for_grudge_message += f"\n\n{user_name}: will you forgive or keep the grudge?"
                         
                         # Create an embed
@@ -785,8 +788,8 @@ def interact(raw_request, active_entitlement):
                     logger.info("Grudge modal submit received")                    
                     data = raw_request["data"]
                     custom_id = data["custom_id"]
-                    victim = parts[2] # Extract the victim ID from the custom_id
-                    user_id = parts[3]  # Extract the user ID from the custom_id
+                    victim_id = parts[2] # Extract the victim ID from the custom_id
+                    killer_id = parts[3]  # Extract the user ID from the custom_id
                     
                     # Process other modal inputs
                     cause_of_death = data["components"][0]["components"][0]["value"]
@@ -808,13 +811,13 @@ def interact(raw_request, active_entitlement):
 
                     # Now you can use the victim ID along with other modal input data
                     try:
-                        db.add_kill(user_id, user_id, victim, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven, evidence_link)
+                        db.add_kill(victim_id, killer_id, victim_id, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven, evidence_link)
                         grudge_announcement_message = get_grudge_announcement()
                         # Construct the message_content dynamically
                         if cause_of_death is None or cause_of_death == "":
-                            content_for_kill_message = f"{mention_user(user_id)} killed {mention_user(victim)}!"
+                            content_for_kill_message = f"{mention_user(killer_id)} killed {mention_user(victim_id)}!"
                         else:
-                            content_for_kill_message = f"{mention_user(user_id)} killed {mention_user(victim)} by {cause_of_death}!"
+                            content_for_kill_message = f"{mention_user(killer_id)} killed {mention_user(victim_id)} by {cause_of_death}!"
 
                         if last_words:
                             content_for_kill_message += f' Their last words were: "{last_words}"'
@@ -827,18 +830,18 @@ def interact(raw_request, active_entitlement):
                         #if not unforgivable and forgiven:
                         #    content_for_kill_message += f" {get_name_fromid(victim)} forgave them instantly."
 
-                        user_kills = db.get_unforgivencount_on_user(user_id, victim, server_id, active_entitlement)
-                        compare_kills = db.get_unforgivencount_on_user(victim, user_id, server_id, active_entitlement)
-                        user_name = get_user_name(raw_request, victim)
-                        victim_name = get_user_name(raw_request, user_id)
-                        
-                        end_of_kill_message = f"{get_grudge_description(raw_request, user_id, user_kills, victim, compare_kills, False, victim)}"
+                        killer_kills = db.get_unforgivencount_on_user(killer_id, victim_id, server_id, active_entitlement)
+                        victim_kills = db.get_unforgivencount_on_user(victim_id, killer_id, server_id, active_entitlement)
+                        killer_name = get_user_name(raw_request, killer_id)
+                        victim_name = get_user_name(raw_request, victim_id)
+                        logging.info(f"victim name: {victim_name} victim_kills: {victim_kills}, killer name: {killer_name} killer_kills: {killer_kills}")
+                        end_of_kill_message = f"{get_grudge_description(raw_request, killer_id, killer_kills, victim_id, victim_kills)}"
                         content_for_grudge_message = ""
-                        if user_kills > compare_kills:
-                            content_for_grudge_message += f"\nWith {user_kills} unforgiven kills on {victim_name} and {compare_kills} in return, {end_of_kill_message} ({user_kills - compare_kills})"
+                        if victim_kills > killer_kills:
+                            content_for_grudge_message += f"\nWith {victim_kills} unforgiven deaths from {victim_name} and {killer_kills} in return, {end_of_kill_message} ({victim_kills - killer_kills})"
                         else:
-                            content_for_grudge_message += f"\nWith {compare_kills} unforgiven kills on {user_name} and {user_kills} in return, {end_of_kill_message} ({compare_kills - user_kills})"
-                        content_for_grudge_message += f"\n\n{user_name}: will you forgive or keep the grudge?"                        
+                            content_for_grudge_message += f"\nWith {killer_kills} unforgiven deaths from {killer_name} and {victim_kills} in return, {end_of_kill_message} ({killer_kills - victim_kills})"
+                        content_for_grudge_message += f"\n\n{victim_name.capitalize()}: will you forgive or keep the grudge?"                        
                         # Create an embed
                         embed = discord.Embed(
                             title=f"{grudge_announcement_message}",
@@ -871,13 +874,13 @@ def interact(raw_request, active_entitlement):
                                                 "type": 2,  # Button
                                                 "label": "Forgive (-1 Grudge)",  # Supportive and positive action
                                                 "style": 1,  # Green button (Success)
-                                                "custom_id": f"forgive_{user_id}_{victim}_{timestamp}"
+                                                "custom_id": f"forgive_{killer_id}_{victim_id}_{timestamp}"
                                             },
                                             {
                                                 "type": 2,  # Button
                                                 "label": "Keep Grudge",  # Not forgiving action
                                                 "style": 4,  # Red button (Danger)
-                                                "custom_id": f"grudge_{user_id}_{victim}_{timestamp}"
+                                                "custom_id": f"grudge_{killer_id}_{victim_id}_{timestamp}"
                                             }
                                         ]
                                     }
@@ -981,7 +984,7 @@ def remove_article(description):
         if description.startswith(article):
             return description[len(article):]  # Remove the article
     return description
-def get_grudge_description(raw_request, user_id, user_kills, compare_user, compare_kills, no_article = False, kill_adjusted_for_user=None):
+def get_grudge_description(raw_request, user_id, user_kills, compare_user, compare_kills, no_article = False):
     """
     Generate a description of the current grudge state, with handling for counter-norm movements
     when a grudge decreases but remains significant.
@@ -996,22 +999,7 @@ def get_grudge_description(raw_request, user_id, user_kills, compare_user, compa
     """
     
     current_grudge = user_kills - compare_kills
-
-    # Calculate previous grudge based on who committed the kill
-    if kill_adjusted_for_user == user_id:
-        previous_grudge = (user_kills - 1) - compare_kills  # Adjust for user_id's kill
-        counter_norm = previous_grudge < current_grudge and current_grudge >= 1
-        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + user: {kill_adjusted_for_user}")
-    elif kill_adjusted_for_user == compare_user:
-        previous_grudge = user_kills - (compare_kills - 1)  # Adjust for compare_user's kill
-        counter_norm = previous_grudge > current_grudge and current_grudge <= -1
-        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + compare_user: {kill_adjusted_for_user}")
-    else:
-        previous_grudge = user_kills - compare_kills  # No kill adjustment
-        counter_norm = False
-        #logging.info(f"Counter-norm movement: {counter_norm} + {previous_grudge} + unfound kill adjusting user: {kill_adjusted_for_user}")
-    
-
+    #logging.info(f"get_grudge_description: user_id: {user_id}, user_kills: {user_kills}, compare_user: {compare_user}, compare_kills: {compare_kills}, no_article: {no_article}")
     #if the user_id and the compare_user_id are the same, just take the total kills instead of comparing
     if user_id == compare_user:
         kill_count_difference = user_kills
@@ -1019,17 +1007,16 @@ def get_grudge_description(raw_request, user_id, user_kills, compare_user, compa
     else: 
         kill_count_difference = user_kills - compare_kills
         self_grudge = False
-
+    #logging.info(f"get_grudge_description: kill_count_difference: {kill_count_difference}")
     #message_content = f"{mention_user(user_id)} has {user_kills} kills. {mention_user(compare_user)} has {compare_kills} kills.\n"
 
     if self_grudge:
-        return f"No grudge detected: both users are tied in their unforgiven kills on each other ({user_kills})."
+        return f"Your grudge against yourself is ({user_kills}) deep."
 
     # Find the appropriate descriptor
     descriptor = db.get_grudge_string(user_id, user_kills, compare_user, compare_kills, no_article)
-
-    grudge_target = get_user_name(raw_request, compare_user if kill_count_difference > 0 else user_id)
-    grudge_holder = get_user_name(raw_request, user_id if kill_count_difference > 0 else compare_user)
+    grudge_holder = get_user_name(raw_request, compare_user if kill_count_difference > 0 else user_id)
+    grudge_target = get_user_name(raw_request, user_id if kill_count_difference > 0 else compare_user)
 
     # Add some variability to the counter-norm phrases
     counter_norm_phrases = [
@@ -1045,7 +1032,10 @@ def get_grudge_description(raw_request, user_id, user_kills, compare_user, compa
     else:
         return f"{grudge_holder} now has {descriptor} against {grudge_target}."
     """
-    return f"{grudge_holder} now has {descriptor} against {grudge_target}."
+    final_string = f"{grudge_holder} now has {descriptor} against {grudge_target}."
+    
+    logging.info(f"get_grudge_description: final_string: {final_string}")
+    return final_string
 def get_grudge_announcement():
     # Category 1: Grudge-related words
     category_1 = [

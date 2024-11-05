@@ -220,7 +220,7 @@ class DynamoDBHandler:
         # Optionally remove the article
         #if no_article:
         #    grudge_descriptor = remove_article(grudge_descriptor)
-
+        logging.info(f"get_grudge_string: grudge_descriptor: {grudge_descriptor}")
         return grudge_descriptor
     def get_name_fromid(self, user_id):
         url = f"https://discord.com/api/v10/users/{user_id}"
@@ -723,7 +723,7 @@ class DynamoDBHandler:
             #logging.info(f"grudgeholder_name: {grudgeholder_name}, begrudged_name: {begrudged_name}, left_unforgivencount_on_right: {left_unforgivencount_on_right}, right_unforgivencount_on_left: {right_unforgivencount_on_left}")
             grudge_desc_string = self.get_grudge_string(left_user_id, left_unforgivencount_on_right, right_user_id, right_unforgivencount_on_left)
             #current_grudge_string = f"A {abs(grudge_count)} point difference in unforgiven kills gives {grudgeholder_name}\n {grudge_desc_string} against {begrudged_name}."
-            current_grudge_string = f"{grudgeholder_name} holds {grudge_desc_string}, leading by {abs(grudge_count)} unforgiven kills ({left_unforgivencount_on_right} vs {right_unforgivencount_on_left})."
+            current_grudge_string = f"{grudgeholder_name} holds {grudge_desc_string}, leading by {abs(grudge_count)} unforgiven deaths ({left_unforgivencount_on_right} vs {right_unforgivencount_on_left})."
             # Create the embed
             embed = discord.Embed(
                 title=f"📜 Grudges between {left_name} and {right_name} 📜",
