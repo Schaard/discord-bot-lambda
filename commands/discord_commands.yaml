@@ -24,6 +24,19 @@
       description: "The user who killed you"
       required: true
 
+- name: "ff"
+  description: "Report a friendly fire kill between two users"
+  type: 1 # CHAT_INPUT
+  options:
+    - name: "killer"
+      type: 6 # USER
+      description: "The user who killed"
+      required: true
+    - name: "victim"
+      type: 6 # USER
+      description: "The user who was killed"
+      required: true
+
 - name: "grudgelist"
   description: "Generate a list of grudges between two users"
   type: 1 # CHAT_INPUT

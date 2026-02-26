@@ -323,6 +323,11 @@ def interact(raw_request, active_entitlement):
                                 inline=False
                             )
                             embed.add_field(
+                                name="/ff <killer> <victim>",
+                                value="Witnessed friendly fire? Report a kill between two other users.",
+                                inline=False
+                            )
+                            embed.add_field(
                                 name="/grudgelist <user1> [user2]",
                                 value="List incidents between two users. If user2 is blank, shows those between user1 and you.",
                                 inline=False
@@ -489,6 +494,65 @@ def interact(raw_request, active_entitlement):
                                             "type": 4,  # TEXT_INPUT
                                             "custom_id": "Evidence",
                                             "style": 1,  # Paragraph input (multi-line)
+                                            "label": "Link to Evidence (optional)",
+                                            "placeholder": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                                            "required": False,
+                                            "max_length": 250
+                                        }
+                                    ]
+                                },
+                            ]
+                        }
+                    }
+                    return jsonify(response_data)
+                case "ff":
+                    killer = data["options"][0]["value"]
+                    victim = data["options"][1]["value"]
+                    kname = get_name_fromid(killer)
+                    vname = get_name_fromid(victim)
+                    
+                    # Trigger a modal to collect inputs
+                    response_data = {
+                        "type": 9,  # MODAL
+                        "data": {
+                            "custom_id": f"ff_modal_{user_id}_{killer}_{victim}",
+                            "title": f"Record: {kname} killed {vname}",
+                            "components": [
+                                {
+                                    "type": 1,  # ACTION_ROW
+                                    "components": [
+                                        {
+                                            "type": 4,  # TEXT_INPUT
+                                            "custom_id": "cause_of_death_input",
+                                            "style": 2,  # Short input
+                                            "label": "Cause of Death (optional)",
+                                            "placeholder": "What was the cause of death?",
+                                            "required": False,
+                                            "max_length": 250
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 1,  # ACTION_ROW
+                                    "components": [
+                                        {
+                                            "type": 4,  # TEXT_INPUT
+                                            "custom_id": "last_words_input",
+                                            "style": 2,  # Paragraph input (multi-line)
+                                            "label": "Last Words (optional)",
+                                            "placeholder": "What was said?",
+                                            "required": False,
+                                            "max_length": 250
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 1,  # ACTION_ROW
+                                    "components": [
+                                        {
+                                            "type": 4,  # TEXT_INPUT
+                                            "custom_id": "Evidence",
+                                            "style": 1,  
                                             "label": "Link to Evidence (optional)",
                                             "placeholder": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                                             "required": False,
@@ -687,7 +751,7 @@ def interact(raw_request, active_entitlement):
                     last_words = data["components"][1]["components"][0]["value"]
                     last_words = sanitize_input(last_words)
                     evidence_link = data["components"][2]["components"][0]["value"]
-                    if len(evidence_link) > 2024: evidence_link = evidence_link[:2024]
+                    if len(evidence_link) > 500: evidence_link = evidence_link[:500]
                     #unforgivable = interpret_boolean_input(unforgivable)
                     
                     #can't forgive your own oops 
@@ -902,7 +966,112 @@ def interact(raw_request, active_entitlement):
                         logger.info(f"returning modal input response data {response_data}")
                         return jsonify(response_data)                    
                     except Exception as e:
-                        return jsonify({"type": 4, "data": {"content": f"Error recording oops: {str(e)}"}})
+                        return jsonify({"type": 4, "data": {"content": f"Error recording grudge: {str(e)}"}})
+                case "ff":
+                    logger.info("FF modal submit received")                    
+                    data = raw_request["data"]
+                    custom_id = data["custom_id"]
+                    reporter_id = parts[2]  # Extract the reporter ID from the custom_id
+                    killer_id = parts[3]   # Extract the killer ID from the custom_id
+                    victim_id = parts[4]   # Extract the victim ID from the custom_id
+                    
+                    # Process other modal inputs
+                    cause_of_death = data["components"][0]["components"][0]["value"]
+                    cause_of_death = sanitize_input(cause_of_death)
+                    last_words = data["components"][1]["components"][0]["value"]
+                    last_words = sanitize_input(last_words)
+                    evidence_link = data["components"][2]["components"][0]["value"]
+                    if len(evidence_link) > 500: evidence_link = evidence_link[:500]
+                    forgiven = False
+                    
+                    # Retrieve the server, game, and channel IDs
+                    server_id = str(raw_request["guild_id"])
+                    game_id = "default_game_id"  # Replace with the actual game ID
+                    channel_id = str(raw_request["channel_id"])
+
+                    # Get the current UTC time and format it as ISO 8601 string
+                    timestamp = datetime.now(timezone.utc).isoformat()
+
+                    # Record the kill
+                    try:
+                        db.add_kill(reporter_id, killer_id, victim_id, cause_of_death, server_id, game_id, channel_id, timestamp, False, forgiven, evidence_link)
+                        grudge_announcement_message = get_grudge_announcement()
+                        
+                        # Construct the message_content dynamically
+                        if cause_of_death is None or cause_of_death == "":
+                            content_for_kill_message = f"{mention_user(killer_id)} killed {mention_user(victim_id)}!"
+                        else:
+                            content_for_kill_message = f"{mention_user(killer_id)} killed {mention_user(victim_id)} by {cause_of_death}!"
+
+                        if last_words:
+                            content_for_kill_message += f' Their last words were: "{last_words}"'
+                        
+                        if evidence_link:
+                            content_for_kill_message += f' The evidence: {evidence_link}'
+
+                        killer_kills = db.get_unforgivencount_on_user(killer_id, victim_id, server_id, active_entitlement)
+                        victim_kills = db.get_unforgivencount_on_user(victim_id, killer_id, server_id, active_entitlement)
+                        killer_name = get_user_name(raw_request, killer_id)
+                        victim_name = get_user_name(raw_request, victim_id)
+                        logging.info(f"victim name: {victim_name} victim_kills: {victim_kills}, killer name: {killer_name} killer_kills: {killer_kills}")
+                        end_of_kill_message = f"{get_grudge_description(raw_request, killer_id, killer_kills, victim_id, victim_kills)}"
+                        content_for_grudge_message = ""
+                        if victim_kills > killer_kills:
+                            content_for_grudge_message += f"\nWith {victim_kills} unforgiven deaths from {victim_name} and {killer_kills} in return, {end_of_kill_message} ({victim_kills - killer_kills})"
+                        else:
+                            content_for_grudge_message += f"\nWith {killer_kills} unforgiven deaths from {killer_name} and {victim_kills} in return, {end_of_kill_message} ({killer_kills - victim_kills})"
+                        content_for_grudge_message += f"\n\nReported by {mention_user(reporter_id)}\n{victim_name.capitalize()}: will you forgive or keep the grudge?"
+                        
+                        # Create an embed
+                        embed = discord.Embed(
+                            title=f"{grudge_announcement_message}",
+                            description=content_for_kill_message,
+                            color=discord.Color.blue().value ,
+                            timestamp=datetime.now()
+                        )
+                        embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/553164743720960010/1296332288484708383/icon64.png?ex=6711e706&is=67109586&hm=90dd6486c2ba6e755b6cdca80182867367bfe95cbb627bba7b03472d3ce3a01d&")
+                        footer_text = "Generated by GrudgeKeeper Free" if not active_entitlement else "Generated by GrudgeKeeper Premium"
+                        embed.set_footer(
+                        text=f"{footer_text}",
+                        icon_url="https://cdn.discordapp.com/attachments/553164743720960010/1296352648001359882/icon32.png?ex=6711f9fc&is=6710a87c&hm=1d1dfe458616c494f06d4018f7bad0e7dd6a9590f742d003742821183125509e&"
+                        )
+                        embed.add_field(name="\u200b", value=content_for_grudge_message, inline=False)
+                        # Convert the embed to a dict
+                        embed_dict = embed.to_dict()
+
+                        logging.info(f"Sending forgiveness embed: {embed_dict}")
+
+                        # Create a response with a button
+                        response_data = {
+                            "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+                            "data": {
+                                "embeds": [embed_dict],
+                                "components": [
+                                    {
+                                        "type": 1,  # ACTION_ROW
+                                        "components": [
+                                            {
+                                                "type": 2,  # Button
+                                                "label": "Forgive (-1 Grudge)",  # Supportive and positive action
+                                                "style": 1,  # Green button (Success)
+                                                "custom_id": f"forgive_{killer_id}_{victim_id}_{timestamp}"
+                                            },
+                                            {
+                                                "type": 2,  # Button
+                                                "label": "Keep Grudge",  # Not forgiving action
+                                                "style": 4,  # Red button (Danger)
+                                                "custom_id": f"grudge_{killer_id}_{victim_id}_{timestamp}"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+
+                        logger.info(f"returning modal input response data {response_data}")
+                        return jsonify(response_data)                    
+                    except Exception as e:
+                        return jsonify({"type": 4, "data": {"content": f"Error recording ff: {str(e)}"}})
 
 #forgiveness
 def get_random_forgiveness_message(postforgiveness_grudge_description):
